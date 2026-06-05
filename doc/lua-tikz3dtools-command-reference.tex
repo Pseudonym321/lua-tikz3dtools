@@ -1,0 +1,183 @@
+\chapter{Command reference}
+
+\section{ltdtappendlabel}
+This command appends a label. Its keys are 
+\begin{itemize}
+    \item v: a homogeneous 3D vector (e.g., 
+    \verb|Vector:new{1,2,3,1}|).
+    \item text: a \LaTeX{} label (e.g., \verb|\LaTeX|).
+    \item transformation: A homogeneous 3D transformation matrix.
+    \item filter: A boolean on v.
+\end{itemize}
+\begin{figure}
+\centering
+\begin{tikzpicture}
+    \ltdtappendlabel[
+        v={return Vector:new{0,0,0,1}},
+        text={\LaTeX},
+        transformation={return Matrix.identity()},
+        filter={return A[1]<10}% true
+    ]
+    \draw (-1,-1) rectangle (1,1);
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{ltdtappendlabel}
+\end{figure}
+
+\section{ltdtappendlight}
+This command appends a light direction. I recommend using only one light 
+direction, unless you have a good reason not to.
+\begin{itemize}
+    \item v: a homogeneous 3D vector
+\end{itemize}
+\begin{figure}
+\centering
+\begin{tikzpicture}
+    \ltdtappendlight[
+        v={return Vector:new{1,1,1,1}}
+    ]
+    \ltdtappendsurface[
+        v={return Vector.sphere(Vector:new{u,v,2})},
+        transformation={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2})},
+        fill options={return "fill=ltdtbrightness,fill opacity=0.7"},
+        uparams={return Vector:new{0,tau,10}},
+        vparams={return Vector:new{0,pi,7}}
+    ]
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{ltdtappendlight}
+\end{figure}
+
+\section{ltdtappendcurve}
+This command appends a curve.
+\begin{itemize}
+    \item uparams: A 3-vector of start, stop and step in u
+    \item v: a homogeneous 3D vector
+    \item transformation: A homogeneous 3D transformation matrix.
+    \item draw options: a string of Ti\textit{k}Z options for a path.
+    \item arrow tip: a string of Ti\textit{k}Z options for a path.
+    \item arrow scale: a number to change the arrow's size
+    \item filter: A boolean on v.
+\end{itemize}
+\begin{figure}
+\centering
+\begin{tikzpicture}
+    \ltdtappendcurve[
+        v={return Vector.sphere(Vector:new{u,u,2})},
+        transformation={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2})},
+        draw options={return "draw"},
+        uparams={return Vector:new{0,tau,30}},
+    ]
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{ltdtappendcurve}
+\end{figure}
+
+\section{ltdtappendsurface}
+This command appends a surface.
+\begin{itemize}
+    \item uparams: A 3-vector of start, stop and step in u
+    \item vparams: A 3-vector of start, stop and step in v
+    \item v: a homogeneous 3D vector
+    \item transformation: A homogeneous 3D transformation matrix.
+    \item fill options: a string of Ti\textit{k}Z options for a path.
+    \item filter: A boolean on v.
+    \item curve: If you know what you're doing, you can embed a table of UV
+    line segments within a surface's simplices. See the example below.
+\end{itemize}
+\begin{figure}
+\centering
+\begin{tikzpicture}
+    \ltdtappendlight[
+        v={return Vector:new{1,1,1,1}}
+    ]
+    \ltdtappendsurface[
+        v={return Vector.sphere(Vector:new{u,v,1}):hadd(Vector:new{2*cos(u),2*sin(u),0,1})},
+        transformation={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2})},
+        fill options={return "fill=ltdtbrightness,fill opacity=0.7"},
+        uparams={return Vector:new{0,tau,10}},
+        vparams={return Vector:new{0,tau,7}},
+        curve={
+            local tab = {}
+            for i = 0, 60 do 
+                table.insert(tab, 
+                    {
+                        Vector:new{i/10, i/10}, 
+                        Vector:new{(i+1)/10, (i+1)/10},
+                        drawoptions="draw=green"
+                    }
+                )
+            end
+            return tab
+        }
+    ]
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{ltdtappendsurface}
+\end{figure}
+
+\section{ltdtappendtriangle}
+This command appends a triangle.
+\begin{itemize}
+    \item m: A 3-vector of start, stop and step in u
+    \item transformation: A homogeneous 3D transformation matrix.
+    \item fill options: a string of Ti\textit{k}Z options for a path.
+    \item filter: A boolean on m.
+\end{itemize}
+\begin{figure}
+\centering
+\begin{tikzpicture}
+    \ltdtappendtriangle[
+        m={return Matrix:new{
+            Vector:new{1,1,1,1},
+            Vector:new{0,0,0,1},
+            Vector:new{-1,2,-2,1}
+        }},
+        fill options={return "fill=red"},
+        transformation={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2})}
+    ]
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{ltdtappendtriangle}
+\end{figure}
+
+\section{ltdtappendsolid}
+This command appends the surface boundaries of a solid mapped from a cube.
+\begin{itemize}
+    \item uparams: A 3-vector of start, stop and step in u
+    \item vparams: A 3-vector of start, stop and step in v
+    \item wparams: A 3-vector of start, stop and step in w
+    \item v: a homogeneous 3D vector
+    \item transformation: A homogeneous 3D transformation matrix.
+    \item fill options: a string of Ti\textit{k}Z options for a path.
+    \item filter: A boolean on v.
+\end{itemize}
+\begin{figure}
+\centering
+\begin{tikzpicture}
+    \ltdtappendlight[
+        v={return Vector:new{1,1,1,1}}
+    ]
+    \ltdtappendsolid[
+        v={return Vector:new{u,v,w-v}},
+        transformation={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2})},
+        fill options={return "fill=ltdtbrightness,fill opacity=0.7"},
+        uparams={return Vector:new{0,1,10}},
+        vparams={return Vector:new{0,1,7}},
+        wparams={return Vector:new{0,1,7}}
+    ]
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{ltdtappendsurface}
+\end{figure}
+
+\section{ltdtdisplaysimplices}
+This command resolves the appended simplices, and displays the resulting 
+output.
+
+\section{ltdtsetobject}
+This command sets a lua object
+\begin{itemize}
+    \item name: the lua name of the object.
+    \item object: the lua object (e.g., a function, or a matrix).
+\end{itemize}

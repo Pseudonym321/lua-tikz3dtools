@@ -1,0 +1,56 @@
+\DocumentMetadata{
+	lang        = en,
+	pdfversion  = 2.0,
+    pdfstandard = UA-2,
+	tagging     = off
+}
+\documentclass[letterpaper]{book}
+
+\usepackage{microtype}
+\usepackage{mathtools}
+\usepackage{unicode-math}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{lua-tikz3dtools}
+\usepackage{tikz-3dplot}
+% \usepackage{biblatex}
+% \usepackage{makeidx}
+
+% \addbibresource{backmatter/lua-tikz3dtools-bibliography.bib}
+% \makeindex
+
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{example}{Example}[section]
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+\newtheorem*{note}{Note}
+\newtheorem*{notation}{Notation}
+\newtheorem{solutiontemp}{Solution}[example]
+\newenvironment{solution}
+    {\renewcommand\thesolutiontemp{\theexample}\solutiontemp}
+    {\endsolutiontemp}
+
+
+\begin{document}
+	\frontmatter
+		\input{lua-tikz3dtools-half-title}
+		\input{lua-tikz3dtools-title}
+		\input{lua-tikz3dtools-license}
+		\input{lua-tikz3dtools-dedication}
+		\input{lua-tikz3dtools-epigraph}
+		\tableofcontents
+		\include{lua-tikz3dtools-preface}
+		% \include{lua-tikz3dtools-acknowledgements}
+	\mainmatter
+	\part{Foundations}
+		\include{lua-tikz3dtools-basic-linear-algebra}
+		\include{lua-tikz3dtools-affine-algebra}
+		\include{lua-tikz3dtools-simplicial-occlusion}
+		\include{lua-tikz3dtools-simplicial-partitioning}
+	\part{Manual}
+		\include{lua-tikz3dtools-command-reference}
+		% \include{lua-tikz3dtools-tutorials}
+		% \include{lua-tikz3dtools-gallery}
+\end{document}
