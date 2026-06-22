@@ -1333,7 +1333,7 @@ in \(\mathbb{R}^{1}\).
     \centering
     \begin{tikzpicture}[font=\tiny]
         \ltdtsetobject[
-            name=view,
+            name={return "view"},
             object={
                 return Matrix.zyzrotation(
                     Vector:new{3.65*pi/6,pi/3,pi/2}
@@ -1918,7 +1918,7 @@ Figure~\ref{fig:affine-R3lineartransformation} illustrates the effect of a linea
     \centering
     \begin{tikzpicture}
         \ltdtsetobject[
-            name=T,
+            name={return "T"},
             object={
                 return Matrix.zyzrotation(Vector:new{pi/2,pi/3,3.65*pi/6})
                 :multiply(Matrix.scaling(Vector:new{1.5,1.5,1.5,1}))
@@ -1987,7 +1987,7 @@ We moved them into the shape of a larger sphere.
     \centering
     \begin{tikzpicture}
         \ltdtsetobject[
-            name=view,
+            name={return "view"},
             object={
                 return Matrix.zyzrotation(Vector:new{pi/2,pi/3,3.65*pi/6})
             }
@@ -2105,7 +2105,7 @@ effect of a projective transformation on a sphere and a cube in \(\mathbb{R}^{3}
     \centering
     \begin{tikzpicture}
         \ltdtsetobject[
-            name=T,
+            name={return "T"},
             object={
                 return Matrix.zyzrotation(Vector:new{pi/2,pi/3,3.65*pi/6})
                 :multiply(Matrix.scaling(Vector:new{1.5,1.5,1.5,1}))

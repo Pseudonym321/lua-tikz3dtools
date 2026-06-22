@@ -1,5 +1,5 @@
 Package Name: lua-tikz3dtools
-Package Version: 3.4.2 (2026-06-04)
+Package Version: 3.4.3 (2026-06-09)
 Repository: https://github.com/Pseudonym321/lua-tikz3dtools
 Author: Jasper Nice
 License: LaTeX Project Public License 1.3c or later

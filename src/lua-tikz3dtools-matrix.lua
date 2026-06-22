@@ -94,7 +94,7 @@ function Matrix:_add(other)
     for i = 1, #self do 
         result[i] = self[i]:_add(other[i])
     end
-    return result
+    return Matrix:_new(result)
 end
 
 --- Binary matrix verification
@@ -126,7 +126,7 @@ function Matrix:_sub(other)
     for i = 1, #self do 
         result[i] = self[i]:_sub(other[i])
     end
-    return result
+    return Matrix:_new(result)
 end
 
 --- Elementwise subtraction of Matrix objects, verified
@@ -145,14 +145,14 @@ function Matrix:_scale(other)
     for i = 1, #self do 
         result[i] = self[i]:_scale(other)
     end
-    return result
+    return Matrix:_new(result)
 end
 
 --- Elementwise scale of Matrix objects, verified
 --- @param other Matrix A matrix of the same shape
 --- @return Matrix The elementwise scale of self and other
 function Matrix:scale(other)
-    assert(getmetatable(other) == number, "other must be a scalar")
+    assert(type(other) == "number", "other must be a scalar")
     return self:_scale(other)
 end
 
@@ -491,19 +491,13 @@ end
 function Matrix:hcentroid_sort()
     local num = #self
     local centroid = self:hcentroid()
-    local I = self:copy()
-    local sum = Vector:_new{0,0,0,1}
-    for i = 1, num do 
-        sum = sum:add(Vector:_new(I[i]))
-    end
-    centroid = sum:_scale(1/num)
-    local P = Vector:_new(I[1])
-    local u = Vector:_new(I[2]):_hsub(P):hnormalize()
-    local v = Vector:_new(I[3]):_hsub(P)
+    local P = Vector:_new(self[1])
+    local u = Vector:_new(self[2]):_hsub(P):hnormalize()
+    local v = Vector:_new(self[3]):_hsub(P)
     local normal = u:_hcross(v):hnormalize()
     v = normal:_hcross(u):hnormalize()
     local angles = {}
-    for i, p in ipairs(I) do
+    for i, p in ipairs(self) do
         local rel = Vector:_new(p):_hsub(centroid)
         local x = rel:_hinner(u)
         local y = rel:_hinner(v)
@@ -513,7 +507,7 @@ function Matrix:hcentroid_sort()
     table.sort(angles, function(a, b) return a.angle < b.angle end)
     local sorted = {}
     for i, a in ipairs(angles) do
-        sorted[i] = I[a.index]
+        sorted[i] = self[a.index]
     end
     return sorted
 end
@@ -575,24 +569,27 @@ function Matrix.shear(kxy, kxz, kyx, kyz, kzx, kzy)
     }
 end
 
---- 3D reflection about an arbitrary axis through the origin
---- @param axis Vector The axis direction
---- @return Matrix The reflection matrix
-function Matrix.reflect_axis(axis)
+--- 3D scale about an arbitrary axis through the origin
+--- @param axis Vector The axis direction (nonzero)
+--- @param scale number The scale factor along the axis
+--- @return Matrix The 4x4 homogeneous scaling matrix
+function Matrix.scale_axis(axis, scale)
     assert(getmetatable(axis) == Vector, "axis must be a Vector.")
-    axis = axis:hnormalize()
-    local x = axis[1]
-    local y = axis[2]
-    local z = axis[3]
+    assert(type(scale) == "number", "scale must be a number.")
+    -- normalize axis to unit length (use your Vector API's normalize method)
+    local u = axis:hnormalize()  -- replace with :normalize() if your API uses that
+    local x = u[1]
+    local y = u[2]
+    local z = u[3]
+    local k = scale - 1
+
     return Matrix:_new{
-        Vector:_new{2 * x * x - 1, 2 * x * y,     2 * x * z,     0},
-        Vector:_new{2 * x * y,     2 * y * y - 1, 2 * y * z,     0},
-        Vector:_new{2 * x * z,     2 * y * z,     2 * z * z - 1, 0},
+        Vector:_new{1 + k * x * x, k * x * y,     k * x * z,     0},
+        Vector:_new{k * x * y,     1 + k * y * y, k * y * z,     0},
+        Vector:_new{k * x * z,     k * y * z,     1 + k * z * z, 0},
         Vector:_new{0, 0, 0, 1}
     }
 end
-
-
 
 --- 3D translation matrix
 --- @param delta Vector The translation vector
@@ -604,19 +601,6 @@ function Matrix.translate(delta)
         Vector:_new{0, 1, 0, 0},
         Vector:_new{0, 0, 1, 0},
         Vector:_new{delta[1], delta[2], delta[3], 1}
-    }
-end
-
---- 3D scaling matrix
---- @param scale Vector The scaling vector
---- @return Matrix The scaling matrix
-function Matrix.scaling(scale)
-    assert(getmetatable(scale) == Vector, "scale must be a Vector.")
-    return Matrix:_new{
-        Vector:_new{scale[1], 0, 0, 0},
-        Vector:_new{0, scale[2], 0, 0},
-        Vector:_new{0, 0, scale[3], 0},
-        Vector:_new{0, 0, 0, 1}
     }
 end
 

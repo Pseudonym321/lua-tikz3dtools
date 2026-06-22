@@ -558,7 +558,7 @@ local function triangle_shading_normal(simplex)
     local A = Vector:_new(simplex[1])
     local B = Vector:_new(simplex[2])
     local C = Vector:_new(simplex[3])
-    local normal = (B:_hsub(A)):_hcross(C:hsub(A))
+    local normal = (B:_hsub(A)):_hcross(C:_hsub(A))
 
     if normal:hnorm() <= 1e-12 then
         return nil
@@ -1086,7 +1086,7 @@ local function display_simplices()
     end
 
     lua_tikz3dtools.simplices = Geometry.scc(lua_tikz3dtools.simplices)
-    print("Time:" .. os.date("%X") .. " Occlusion sortinc complete.")
+    print("Time:" .. os.date("%X") .. " Occlusion sorting complete.")
 
     local labels = {}
     for _, simplex in ipairs(lua_tikz3dtools.simplices) do
@@ -1156,7 +1156,7 @@ end
 
 local function set_object(hash)
     local object = object_expression(hash.object)
-    local name = hash.name
+    local name = object_expression(hash.name)
 
     assert(type(name) == "string" and name ~= "", "setobject.name must be a non-empty string")
     assert(lua_tikz3dtools.base_env[name] == nil,

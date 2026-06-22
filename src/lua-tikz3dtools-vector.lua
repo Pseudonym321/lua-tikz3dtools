@@ -163,7 +163,7 @@ end
 --- @param other Vector A vector of same size
 --- @return Vector The difference of self and other
 function Vector:_sub(other)
-    return self:add(other:scale(-1))
+    return self:_add(other:_scale(-1))
 end
 
 --- Subtraction of Vector objects, with validation
@@ -261,7 +261,7 @@ end
 function Vector:_cross(other)
     return Vector:_new{
         self[2] * other[3] - self[3] * other[2],
-        self[1] * other[3] - self[3] * other[1],
+        self[3] * other[1] - self[1] * other[3],
         self[1] * other[2] - self[2] * other[1]
     }
 end
@@ -405,7 +405,7 @@ function Vector:horthogonal_projection_onto_plane(plane_basis)
         "Must be a 2D affine basis."
     )
     assert(#plane_basis == 3 and #plane_basis[1] == 4, "Incorrect plane basis.")
-    return self:_horthogonal_projection_onto_plane(other)
+    return self:_horthogonal_projection_onto_plane(plane_basis)
 end
 
 --- Homogeneous norm of Vector objects

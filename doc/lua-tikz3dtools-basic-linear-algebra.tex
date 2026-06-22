@@ -12,7 +12,7 @@ way, with just some core concepts.
 
 In basic linear algebra, vectors are typically introduced in a more 
 conceptually intuitive way. Specifically, they are commonly represented 
-as directed line segments. This is a geometric-coordinate vector.
+as directed line segments. This is a geometric-coordinate vector.name={return "view"}
 Vectors can be much more abstract than this,
 but that is not basic linear algebra. 
 
@@ -43,7 +43,7 @@ intuitive basis. See Figure~\ref{fig:la1}.
     \centering 
     \begin{tikzpicture}[scale=0.7]
         \ltdtsetobject[
-            name=view,
+            name={return "view"},
             object={
                 return Matrix.zyzrotation(
                     Vector:new{pi/6,pi/3,pi/2}
@@ -151,7 +151,7 @@ has its length uniformly scaled.
     \centering 
     \begin{tikzpicture}[scale=0.7]
         \ltdtsetobject[
-            name=view,
+            name={return "view"},
             object={
                 return Matrix.zyzrotation(
                     Vector:new{7*pi/6,pi/3,pi/2}
@@ -237,7 +237,7 @@ the blue vector and its length is the area of the blue region.
     \begin{tikzpicture}[scale=0.5]
         \pgfmathsetmacro\i{15*2*pi/40}
         \ltdtsetobject[
-            name=view,
+            name={return "view"},
             object={
                 return Matrix.zyzrotation(
                     Vector:new{7*pi/6,pi/3,pi/2}
@@ -258,7 +258,7 @@ the blue vector and its length is the area of the blue region.
             v={return Vector:new{cos(0),sin(0),0,1}:hscale(2.25)}
         ]
         \ltdtsetobject[
-            name={vecV},
+            name={return "vecV"},
             object={
                 return Vector:new{cos(\i),sin(\i),0,1}
                 :hscale(1.3+sin(\i)/5)
@@ -368,7 +368,7 @@ intersect in lower dimensional subspaces.
     \centering
     \begin{tikzpicture}
         \ltdtsetobject[
-            name=view,
+            name={return "view"},
             object={
                 return Matrix.zyzrotation(
                     Vector:new{7*pi/6,pi/3,pi/2}
@@ -376,7 +376,7 @@ intersect in lower dimensional subspaces.
             }
         ]
         \ltdtsetobject[
-            name=cam,
+            name={return "cam"},
             object={return view:inverse()}
         ]
         \ltdtappendlight[
