@@ -5,6 +5,21 @@ local Matrix = {}
 Matrix.__index = Matrix
 
 local Vector = nil
+
+local function finite_number(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+end
+
+local function finite_vector3(value)
+    return getmetatable(value) == Vector
+        and finite_number(value[1])
+        and finite_number(value[2])
+        and finite_number(value[3])
+end
+
 --- Vector injection
 --- @param vclass Vector the class is its own metatable
 function Matrix:_set_vector_class(vclass)
@@ -28,6 +43,10 @@ function Matrix:new(matrix)
     )
     local rows = #matrix 
     assert(rows > 0, "matrix must not be empty")
+    assert(
+        getmetatable(matrix[1]) == Vector,
+        "Matrix row must be vector"
+    )
     local cols = #matrix[1]
     for row = 1, rows do 
         assert(
@@ -138,7 +157,7 @@ function Matrix:sub(other)
 end
 
 --- Elementwise scale of Matrix objects, unverified
---- @param other Matrix A matrix of the same shape
+--- @param other number The scalar
 --- @return Matrix The elementwise scale of self and other
 function Matrix:_scale(other)
     local result = {}
@@ -156,9 +175,9 @@ function Matrix:scale(other)
     return self:_scale(other)
 end
 
---- Column reduction of the Matrix to RREF form
---- THIS IS AI GENERATED!!! As of yet, I am still learning linear algebra.
---- @return Vector|nil The solution vector (last row of RREF)
+--- Solve the augmented column system represented by this Matrix.
+--- Free variables are assigned zero; inconsistent systems return nil.
+--- @return Vector|nil A solution vector, or nil for an inconsistent system
 function Matrix:column_reduction()
     local cols = self:copy()
     local numcols = #cols
@@ -260,8 +279,7 @@ function Matrix:transpose()
 end
 
 
---- Inverse of the Matrix (row-vector convention, column GJ)
---- THIS IS AI GENERATED AS OF YET, SORRY.
+--- Inverse of the Matrix by Gauss-Jordan elimination.
 --- @return Matrix|nil The inverse matrix, or nil if not invertible
 function Matrix:inverse()
     local n = #self
@@ -358,9 +376,8 @@ function Matrix:reciprocate_by_homogeneous()
 end
 
 --- Multiply two Matrix objects, unverified
---- @param other Matrix|Vector The RHS
---- @return Matrix|Vector The product of self and other
---- @param reciprocate boolean|nil If true, apply homogeneous reciprocation for non-4x4 results (default true for non-flag)
+--- @param other Matrix The RHS
+--- @return Matrix The product of self and other
 function Matrix:_multiply(other)
     local Arows = #self
     local Acols = #self[1]
@@ -379,26 +396,13 @@ function Matrix:_multiply(other)
     return Matrix:_new(product)
 end
 
---- Multiply two Matrix objects, veri....
---- @param other Matrix|Vector The RHS
---- @return Matrix|Vector The product of self and other
---- @param reciprocate boolean|nil If true, apply homogeneous reciprocation for non-4x4 results (default true for non-flag)
+--- Multiply two Matrix objects, with shape validation.
+--- @param other Matrix The RHS
+--- @return Matrix The product of self and other
 function Matrix:multiply(other)
-    local Arows = #self
-    local Acols = #self[1]
-    local Bcols = #other[1]
-    local product = {}
-    for row = 1, Arows do
-        product[row] = {}
-        for col = 1, Bcols do
-            product[row][col] = 0
-            for k = 1, Acols do
-                product[row][col] = product[row][col] + self[row][k] * other[k][col]
-            end
-        end
-        product[row] = Vector:_new(product[row])
-    end
-    return Matrix:_new(product)
+    assert(getmetatable(other) == Matrix, "other must be a Matrix")
+    assert(#self[1] == #other, "matrix dimensions do not conform for multiplication")
+    return self:_multiply(other)
 end
 
 --- Get 3D bounding box of Matrix points
@@ -486,7 +490,6 @@ end
 
 
 --- Sort points in Matrix by angle around their homogeneous centroid
---- AI GENERATED FOR SPEED.
 --- @return table The sorted points (as plain table, not Matrix)
 function Matrix:hcentroid_sort()
     local num = #self
@@ -530,7 +533,18 @@ end
 --- @param theta number The rotation angle in radians
 --- @return Matrix The rotation matrix
 function Matrix.axis_angle(axis, theta)
-    assert(getmetatable(axis) == Vector, "axis must be a Vector.")
+    if getmetatable(axis) ~= Vector then
+        return Matrix.identity()
+    end
+    if not (type(theta) == "number" and theta == theta
+        and theta ~= math.huge and theta ~= -math.huge)
+    then
+        return Matrix.identity()
+    end
+    local axis_norm = axis:hnorm()
+    if not (finite_number(axis_norm) and axis_norm > 0) then
+        return Matrix.identity()
+    end
     axis = axis:hnormalize()
     local x = axis[1]
     local y = axis[2]
@@ -574,10 +588,19 @@ end
 --- @param scale number The scale factor along the axis
 --- @return Matrix The 4x4 homogeneous scaling matrix
 function Matrix.scale_axis(axis, scale)
-    assert(getmetatable(axis) == Vector, "axis must be a Vector.")
-    assert(type(scale) == "number", "scale must be a number.")
-    -- normalize axis to unit length (use your Vector API's normalize method)
-    local u = axis:hnormalize()  -- replace with :normalize() if your API uses that
+    if getmetatable(axis) ~= Vector then
+        return Matrix.identity()
+    end
+    if not (type(scale) == "number" and scale == scale
+        and scale ~= math.huge and scale ~= -math.huge)
+    then
+        return Matrix.identity()
+    end
+    local axis_norm = axis:hnorm()
+    if not (finite_number(axis_norm) and axis_norm > 0) then
+        return Matrix.identity()
+    end
+    local u = axis:hnormalize()
     local x = u[1]
     local y = u[2]
     local z = u[3]
@@ -595,7 +618,9 @@ end
 --- @param delta Vector The translation vector
 --- @return Matrix The translation matrix
 function Matrix.translate(delta)
-    assert(getmetatable(delta) == Vector, "delta must be a Vector.")
+    if not finite_vector3(delta) then
+        return Matrix.identity()
+    end
     return Matrix:_new{
         Vector:_new{1, 0, 0, 0},
         Vector:_new{0, 1, 0, 0},
@@ -609,7 +634,9 @@ end
 --- @param angles Vector The Euler angles (alpha, beta, gamma)
 --- @return Matrix The rotation matrix
 function Matrix.zyzrotation(angles)
-    assert(getmetatable(angles) == Vector, "angles must be a Vector.")
+    if not finite_vector3(angles) then
+        return Matrix.identity()
+    end
     return Matrix.axis_angle(Vector:_new{0, 0, 1, 1}, angles[1])
         :multiply(Matrix.axis_angle(Vector:_new{0, 1, 0, 1}, angles[2]))
         :multiply(Matrix.axis_angle(Vector:_new{0, 0, 1, 1}, angles[3]))
@@ -630,7 +657,9 @@ end
 --- @param axis Vector The perspective axis and strength
 --- @return Matrix The perspective matrix
 function Matrix.perspective(axis)
-    assert(getmetatable(axis) == Vector, "axis must be a Vector.")
+    if not finite_vector3(axis) then
+        return Matrix.identity()
+    end
     return Matrix:_new{
         Vector:_new{1, 0, 0, axis[1]},
         Vector:_new{0, 1, 0, axis[2]},
@@ -644,10 +673,21 @@ end
 --- @param transformation Matrix The transformation to apply
 --- @return Matrix The composed transformation
 function Matrix.transform_about(point, transformation)
-    assert(getmetatable(point) == Vector, "point must be a Vector.")
-    return Matrix.translate(Vector:_new{-point[1], -point[2], -point[3], 1})
-        :multiply(transformation)
-        :multiply(Matrix.translate(point))
+    if getmetatable(transformation) ~= Matrix then
+        return Matrix.identity()
+    end
+    if not finite_vector3(point) then
+        return transformation
+    end
+    local ok, result = pcall(function()
+        return Matrix.translate(Vector:_new{-point[1], -point[2], -point[3], 1})
+            :multiply(transformation)
+            :multiply(Matrix.translate(point))
+    end)
+    if not ok then
+        return Matrix.identity()
+    end
+    return result
 end
 
 return Matrix

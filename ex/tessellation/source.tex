@@ -1,0 +1,50 @@
+\documentclass[tikz,border=6pt]{standalone}
+\usepackage{lua-tikz3dtools}
+\begin{document}
+\begin{tikzpicture}
+    \useasboundingbox (-5.5,-4.5) rectangle (5.5,4.5);
+    \ltdtsetobject[
+        name={return "objs"},
+        object={
+            local nan=0/0
+            local function point(x,y)
+                local q=x*x/2+y*y-1
+                if q<=0 then return Vector:new{nan,nan,nan,1} end
+                local f=sqrt(q)
+                local g=f/abs(f)
+                local h=1/((((x-10)+(y-3)^2)^2)+1)
+                local z=g+h+1/(x*x+(y+10)^2-1)
+                if z~=z or z>12 or z< -12 then return Vector:new{nan,nan,nan,1} end
+                return Vector:new{0.27*x,0.27*y,0.30*z,1}
+            end
+            return {
+                point=point,
+                view=Matrix.zyzrotation(Vector:new{1.08*pi,0.36*pi,0.72*pi})
+            }
+        }
+    ]
+    \ltdtappendlight[
+        v={return Vector:new{1,-1,2,1}}
+    ]
+    \ltdtappendsurface[
+        uparams={return Vector:new{-12,12,17}},
+        vparams={return Vector:new{-12,12,17}},
+        adaptive={
+            return {
+                tolerance=0.0001,
+                feature_tolerance=0.001,
+                max_depth=3,
+                max_triangles=1400
+            }
+        },
+        v={return objs.point(u,v)},
+        transformation={return objs.view},
+        fill options={
+            return function(lighting)
+                return "fill=red!"..tostring(floor(45+50*lighting)).."!black,draw=red!22!black,line width=0.05pt"
+            end
+        }
+    ]
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\end{document}

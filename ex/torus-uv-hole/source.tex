@@ -1,0 +1,112 @@
+\documentclass[tikz,border=1cm]{standalone}
+\usepackage{lua-tikz3dtools}
+\begin{document}
+\foreach \i in {1,...,24} {
+    \begin{tikzpicture}
+        \useasboundingbox (-4.5,-4.5) rectangle (4.5,4.5);
+        \ltdtsetobject[
+            name={return "view"},
+            object={
+                return Matrix.zyzrotation(
+                    Vector:new{
+                        pi/2+\i*tau/24,
+                        pi/2+0.1+\i*tau/24,
+                        3.75*pi/6+\i*tau/24
+                    }
+                )
+            }
+        ]
+        \ltdtsetobject[
+            name={return "viewinverse"},
+            object={return view:inverse()}
+        ]
+        \ltdtsetobject[
+            name={return "torusinverse"},
+            object={
+                return function(p)
+                    local x, y, z = p[1], p[2], p[3]
+                    local u = atan2(y,x)
+                    if u < 0 then
+                        u = u + tau
+                    end
+                    local radial = sqrt(x^2+y^2)
+                    local v = atan2(radial-3,z)
+                    if v < 0 then
+                        v = v + tau
+                    end
+                    return Vector:new{u,v,0,1}
+                end
+            }
+        ]
+        \ltdtappendlight[
+            v={return Vector:new{1,1,1,1}}
+        ]
+        \ltdtappendsurface[
+            name=holeboundary,
+            uparams={return Vector:new{0,tau,20}},
+            vparams={return Vector:new{-1,0.5,4}},
+            v={
+                local theta = cos(u)/2+2
+                local phi = sin(u)/2+2
+                local s = Vector.sphere(
+                    Vector:new{theta,phi,1+v}
+                )
+                return Vector:new{
+                    3*cos(theta)+s[1],
+                    3*sin(theta)+s[2],
+                    s[3],
+                    1
+                }
+            },
+            transformation={return view},
+            filter={return false}
+        ]
+        \ltdtappendsurface[
+            uparams={return Vector:new{0,tau,20}},
+            vparams={return Vector:new{0,tau,14}},
+            v={
+                local s = Vector.sphere(Vector:new{u,v,1})
+                return Vector:new{
+                    3*cos(u)+s[1],
+                    3*sin(u)+s[2],
+                    s[3],
+                    1
+                }
+            },
+            transformation={return view},
+            fill options={
+                return function(lighting)
+                    local percent = math.floor(lighting*100)
+                    return
+                        "fill=white!"
+                        .. percent
+                        .. "!black,draw=none"
+                end
+            },
+            partition by={
+                return {
+                    {
+                        surface="holeboundary",
+                        keep="both",
+                        intersection_options="draw=red,line width=.8pt"
+                    }
+                }
+            },
+            filter={
+                local uv =
+                    torusinverse(
+                        A:hadd(B)
+                         :hadd(C)
+                         :hscale(1/3)
+                         :multiply(viewinverse)
+                    )
+                return
+                    uv:hdistance(
+                        Vector:new{2,2,0,1}
+                    ) > 0.5
+            }
+        ]
+        \ltdtdisplaysimplices
+    \end{tikzpicture}
+}
+\end{document}

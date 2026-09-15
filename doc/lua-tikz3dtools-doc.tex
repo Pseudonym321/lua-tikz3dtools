@@ -1,58 +1,436 @@
-\DocumentMetadata{
-	lang        = en,
-	pdfversion  = 2.0,
-    pdfstandard = UA-2,
-	tagging     = off
-}
-\documentclass[letterpaper]{book}
-
-\usepackage{microtype}
-\usepackage{mathtools}
-\usepackage{unicode-math}
-\usepackage{amsmath}
-\usepackage{amsthm}
+\documentclass{article}
 \usepackage{lua-tikz3dtools}
-\usepackage{tikz-3dplot}
-\usepackage{graphicx}
-\usepackage{animate}
-% \usepackage{biblatex}
-% \usepackage{makeidx}
-
-% \addbibresource{backmatter/lua-tikz3dtools-bibliography.bib}
-% \makeindex
-
-
-\theoremstyle{definition}
-\newtheorem{definition}{Definition}[chapter]
-\newtheorem{example}{Example}[section]
-\theoremstyle{remark}
-\newtheorem*{remark}{Remark}
-\newtheorem*{note}{Note}
-\newtheorem*{notation}{Notation}
-\newtheorem{solutiontemp}{Solution}[example]
-\newenvironment{solution}
-    {\renewcommand\thesolutiontemp{\theexample}\solutiontemp}
-    {\endsolutiontemp}
-
 
 \begin{document}
-	\frontmatter
-		\input{lua-tikz3dtools-half-title}
-		\input{lua-tikz3dtools-title}
-		\input{lua-tikz3dtools-license}
-		\input{lua-tikz3dtools-dedication}
-		\input{lua-tikz3dtools-epigraph}
-		\tableofcontents
-		\include{lua-tikz3dtools-preface}
-		% \include{lua-tikz3dtools-acknowledgements}
-	\mainmatter
-	\part{Foundations}
-		\include{lua-tikz3dtools-basic-linear-algebra}
-		\include{lua-tikz3dtools-affine-algebra}
-		\include{lua-tikz3dtools-simplicial-occlusion}
-		\include{lua-tikz3dtools-simplicial-partitioning}
-	\part{Manual}
-		\include{lua-tikz3dtools-command-reference}
-		% \include{lua-tikz3dtools-tutorials}
-		% \include{lua-tikz3dtools-gallery}
+
+This document is MWE-led: the examples are intended to do the explaining.
+
+\ltdtsetobject[
+    name={return "fixedfour"},
+    object={
+        return function(x)
+            x=max(0,min(1,x))
+            local n=floor(x*10000+0.5)
+            local whole=floor(n/10000)
+            local frac=n-whole*10000
+            local tail=tostring(frac)
+            if frac<10 then tail="000"..tail elseif frac<100 then tail="00"..tail elseif frac<1000 then tail="0"..tail end
+            return tostring(whole).."."..tail
+        end
+    }
+]
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\useasboundingbox (-80mm,-45mm) rectangle (80mm,45mm);
+\pgfmathsetmacro\SSS{3}
+\pgfmathsetmacro{\PHASE}{2*pi*58/120}
+\ltdtappendlight[v={return Vector:new{1,1,2,1}}]
+\ltdtsetobject[name={return "rot"},object={return \PHASE}]
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2}):multiply(Matrix.perspective(Vector:new{0,0,-1/8}))}
+]
+\ltdtsetobject[
+    name={return "clifford"},
+    object={
+        return function(u,v)
+            local scale=1/sqrt(2)
+            local x1=scale*cos(u)
+            local y1=scale*sin(u)
+            local x2=scale*cos(v)
+            local y2=scale*sin(v)
+            local xr=x1*cos(rot)-y2*sin(rot)
+            local wr=x1*sin(rot)+y2*cos(rot)
+            local yr=y1
+            local zr=x2
+            local denom=1-wr
+            if denom<1/40 then return nil end
+            local px=xr/denom
+            local py=yr/denom
+            local pz=zr/denom
+            if px*px+py*py+pz*pz>40 then return nil end
+            return Vector:new{px,py,pz,1}
+        end
+    }
+]
+\ltdtappendsurface[
+    uparams={return Vector:new{0,tau,20}},
+    vparams={return Vector:new{0,tau,15}},
+    transformation={return view},
+    v={return clifford(u,v)},
+    filter={
+        local M=A:hadd(B):hadd(C):hscale(1/3):multiply(view:inverse())
+        return abs(M[1])<\SSS+0.001 and abs(M[2])<\SSS+0.001 and abs(M[3])<\SSS+0.001
+    },
+    fill options={
+        local r=0.5*lighting
+        local g=0.5+0.5*lighting
+        return "fill={rgb,1:red,"..fixedfour(r)..";green,"..fixedfour(g)..";blue,"..fixedfour(g).."},fill opacity=0.9,postaction={draw=black,line cap=round,line join=round}"
+    }
+]
+\ltdtappendsolid[
+    uparams={return Vector:new{-\SSS,\SSS,\SSS}},
+    vparams={return Vector:new{-\SSS,\SSS,\SSS}},
+    wparams={return Vector:new{-\SSS,\SSS,\SSS}},
+    transformation={return view},
+    filter={return false},
+    v={return Vector:new{u,v,w,1}}
+]
+\ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{A stereographic image of the Clifford torus.}
+\end{figure}
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\useasboundingbox (-80mm,-45mm) rectangle (80mm,45mm);
+\begin{scope}[scale=1.3]
+\ltdtappendlight[v={return Vector:new{1,1,1,1}}]
+\def\SSS{3}
+\def\CCC{10}
+\foreach \AAA in {0,30,60} {
+    \pgfmathsetmacro{\AAA}{\AAA+\CCC}
+    \ltdtsetobject[name={return "a"},object={return \AAA*pi/180}]
+    \ltdtsetobject[name={return "R"},object={return 1/cos(a)}]
+    \ltdtsetobject[name={return "r"},object={return sqrt(abs(1/cos(a)^2)-abs(cos(a)))}]
+    \ltdtsetobject[
+        name={return "view"},
+        object={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2}):multiply(Matrix.perspective(Vector:new{0,0,-1/6}))}
+    ]
+    \pgfmathtruncatemacro{\BBB}{((\AAA-10)*10/7)}
+    \ltdtappendsurface[
+        uparams={return Vector:new{pi/2,-pi,20}},
+        vparams={return Vector:new{0,2*pi,50}},
+        transformation={return view},
+        v={return Vector.sphere(Vector:new{u,v,r}):hadd(Vector:new{R*cos(u),R*sin(u),0,1})},
+        filter={
+            local M=A:hadd(B):hadd(C):hscale(1/3):multiply(view:inverse())
+            return abs(M[1])<\SSS.001 and abs(M[2])<\SSS.001 and abs(M[3])<\SSS.001
+        },
+        fill options={
+            local shade=lighting/2+\BBB/400
+            return "fill={rgb,1:red,"..fixedfour(shade)..";green,"..fixedfour(shade)..";blue,"..fixedfour(shade).."},fill opacity=1"
+        }
+    ]
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,3*pi/2,211}},
+        v={
+            local branches=7
+            local wrap=floor(branches*u/tau+1e-9)
+            local su=pi/2-u
+            local sv=branches*u-wrap*tau
+            local p=Vector.sphere(Vector:new{su,sv,r}):hadd(Vector:new{R*cos(su),R*sin(su),0,1})
+            return p:multiply(view):reciprocate_by_homogeneous():hadd(Vector:new{0,0,0.1,1})
+        },
+        filter={
+            local M=A:hadd(B):hscale(1/2):hadd(Vector:new{0,0,-0.1,1}):multiply(view:inverse())
+            return abs(M[1])<\SSS.001 and abs(M[2])<\SSS.001 and abs(M[3])<\SSS.001
+        },
+        draw options={return "draw=green!50!black,thick"}
+    ]
+}
+\ltdtappendsolid[
+    uparams={return Vector:new{-\SSS,\SSS,2}},
+    vparams={return Vector:new{-\SSS,\SSS,2}},
+    wparams={return Vector:new{-\SSS,\SSS,2}},
+    transformation={return view},
+    filter={return false},
+    v={return Vector:new{u,v,w,1}}
+]
+\ltdtdisplaysimplices
+\end{scope}
+\end{tikzpicture}
+\caption{Clifford parallels under stereographic projection.}
+\end{figure}
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\useasboundingbox (-40mm,-45mm) rectangle (40mm,45mm);
+\pgfmathsetmacro{\PLANEANGLE}{2*pi*30/120}
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.zyzrotation(Vector:new{7*pi/6,pi/3,pi/2}):multiply(Matrix.perspective(Vector:new{0,0,-1/8}))}
+]
+\ltdtappendsolid[
+    uparams={return Vector:new{-1,1,2}},
+    vparams={return Vector:new{-1,1,2}},
+    wparams={return Vector:new{-1,1,2}},
+    v={return Vector:new{u,v,w,1}:hscale(2):multiply(view)},
+    fill options={return "fill=gray!50!white,fill opacity=0.3,postaction={draw,line join=round}"}
+]
+\foreach \rot in {1,2,3} {
+    \ltdtappendsurface[
+        uparams={return Vector:new{-1,1,2}},
+        vparams={return Vector:new{-1,1,2}},
+        v={
+            local a=\rot*tau/3+\PLANEANGLE
+            return Vector:new{u,v,0,1}:hscale(4):multiply(Matrix.zyzrotation(Vector:new{a,a,a})):multiply(view)
+        },
+        fill options={
+            local color="yellow"
+            if \rot==2 then color="green" elseif \rot==3 then color="blue" end
+            return "preaction={fill="..color..",fill opacity=0.6},postaction={draw=black,ultra thin,line join=round,line cap=round}"
+        },
+        filter={
+            local p=A:hadd(B):hadd(C):hscale(1/3)
+            local f=p:multiply(view:inverse())
+            return abs(f[1])<2.001 and abs(f[2])<2.001 and abs(f[3])<2.001
+        }
+    ]
+}
+\ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{Three intersecting planes clipped by a cube.}
+\end{figure}
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\useasboundingbox (-40mm,-45mm) rectangle (40mm,45mm);
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2}):multiply(Matrix.perspective(Vector:new{0,0,-1/6}))}
+]
+\ltdtappendlight[v={return Vector:new{1,1,1,1}}]
+\ltdtappendsurface[
+    uparams={return Vector:new{0,1,60}},
+    vparams={return Vector:new{0,1,30}},
+    v={
+        local x=u*pi
+        local y=v*tau
+        local c=cos(x)
+        local s=sin(x)
+        local c1=cos(y)
+        return Vector:new{
+            -2/15*c*(3*c1-30*s+90*c^4*s-60*c^6*s+5*c*c1*s),
+            -1/15*s*(3*c1-3*c^2*c1-48*c^4*c1+48*c^6*c1-60*s+5*c*c1*s-5*c^3*c1*s-80*c^5*c1*s+80*c^7*c1*s),
+            2/15*(3+5*c*s)*sin(y),
+            1
+        }:multiply(view):multiply(Matrix.translate(Vector:new{2,0,0}))
+    },
+    fill options={return "fill={rgb,1:red,"..fixedfour(lighting)..";green,"..fixedfour(lighting)..";blue,"..fixedfour(lighting).."}"}
+]
+\ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{A Klein bottle immersion.}
+\end{figure}
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\useasboundingbox[scale=2.5] (-2,-2) rectangle (2,2);
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.zyzrotation(Vector:new{5.25*pi/6,pi/3,pi/2})}
+]
+\ltdtsetobject[name={return "invview"},object={return view:inverse()}]
+\ltdtappendsurface[
+    uparams={return Vector:new{-2,2,20}},
+    vparams={return Vector:new{-2,2,20}},
+    transformation={return view},
+    v={return Vector:new{u,v,u^4+v^4-4*u*v+1,1}},
+    fill options={return "preaction={fill=green,fill opacity=0.2},postaction={draw=blue,ultra thin,line join=round}"},
+    filter={
+        local p=A:hadd(B):hadd(C):hscale(1/3):multiply(invview)
+        return p[3]<2
+    }
+]
+\ltdtappendsolid[
+    uparams={return Vector:new{-4,4,5}},
+    vparams={return Vector:new{-4,4,5}},
+    wparams={return Vector:new{-4,2,5}},
+    transformation={return view},
+    v={return Vector:new{u,v,w,1}},
+    fill options={return "preaction={fill=none,fill opacity=0.5},postaction={draw=none,ultra thin,line join=round,line cap=round}"}
+]
+\ltdtappendcurve[
+    uparams={return Vector:new{0,4,5}},
+    transformation={return view},
+    v={return Vector:new{0,0,u,1}},
+    arrow tip={return {options="fill=black"}},
+    draw options={return "draw,ultra thin,line cap=round"}
+]
+\ltdtappendlabel[transformation={return view},v={return Vector:new{0,0,4.3,1}},text={\(z\)}]
+\ltdtappendcurve[
+    uparams={return Vector:new{0,4,5}},
+    transformation={return view},
+    v={return Vector:new{0,u,0,1}},
+    arrow tip={return {options="fill=black"}},
+    draw options={return "draw,ultra thin,line cap=round"}
+]
+\ltdtappendlabel[transformation={return view},v={return Vector:new{0,4.3,0,1}},text={\(y\)}]
+\ltdtappendcurve[
+    uparams={return Vector:new{0,4,5}},
+    transformation={return view},
+    v={return Vector:new{u,0,0,1}},
+    arrow tip={return {options="fill=black"}},
+    draw options={return "draw,ultra thin,line cap=round"}
+]
+\ltdtappendlabel[transformation={return view},v={return Vector:new{4.3,0,0,1}},text={\(x\)}]
+\ltdtappendsurface[
+    uparams={return Vector:new{-4,4,10}},
+    vparams={return Vector:new{-4,4,10}},
+    transformation={return view},
+    v={return Vector:new{u,v,0,1}},
+    fill options={return "preaction={fill=gray,fill opacity=0.25},postaction={draw=none}"}
+]
+\foreach \C in {-4,-3,...,4} {
+    \ltdtappendcurve[
+        uparams={return Vector:new{-4,4,5}},
+        transformation={return view},
+        v={return Vector:new{\C,u,0,1}},
+        draw options={return "draw=black,dashed,ultra thin"}
+    ]
+    \ltdtappendcurve[
+        uparams={return Vector:new{-4,4,5}},
+        transformation={return view},
+        v={return Vector:new{u,\C,0,1}},
+        draw options={return "draw=black,dashed,ultra thin"}
+    ]
+}
+\ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{A saddle point and its reference plane.}
+\end{figure}
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\clip (-30mm,-20mm) rectangle (30mm,20mm);
+\useasboundingbox (-30mm,-20mm) rectangle (30mm,20mm);
+\pgfmathsetmacro{\NETANGLE}{30*2*pi/120}
+\ltdtsetobject[name={return "ang"},object={return \NETANGLE}]
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.zyzrotation(Vector:new{7.5*pi/6,pi/3,pi/2}):multiply(Matrix.perspective(Vector:new{0,0,0}))}
+]
+\def\lonmax{12}
+\foreach \longitude in {1,...,\lonmax} {
+    \ltdtsetobject[name={return "longitude"},object={return \longitude*2*pi/\lonmax}]
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,1,160}},
+        v={
+            local p=Vector.stereographic_projection(Vector.sphere(Vector:new{longitude,u*pi,1}):multiply(Matrix.zyzrotation(Vector:new{ang,ang,0}))):multiply(view)
+            if abs(p[1])<3.2 and abs(p[2])<2 then return p end
+            return nil
+        },
+        draw options={return "draw=red,line cap=round"}
+    ]
+}
+\def\latmax{6}
+\foreach \latitude in {1,...,\latmax} {
+    \ltdtsetobject[name={return "latitude"},object={return \latitude*pi/\latmax}]
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,1,160}},
+        v={
+            local p=Vector.stereographic_projection(Vector.sphere(Vector:new{u*tau,latitude,1}):multiply(Matrix.zyzrotation(Vector:new{0,ang,0}))):multiply(view)
+            if abs(p[1])<3.2 and abs(p[2])<2 then return p end
+            return nil
+        },
+        draw options={return "draw=red,line cap=round"}
+    ]
+}
+\ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{A stereographic coordinate net.}
+\end{figure}
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\useasboundingbox (-80mm,-45mm) rectangle (80mm,45mm);
+\pgfmathsetmacro{\MOBIUSFRAME}{30*pi/120}
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2})}
+]
+\ltdtsetobject[
+    name={return "rot"},
+    object={return Matrix.axis_angle(Vector:new{1,1,0,1},\MOBIUSFRAME)}
+]
+\foreach \lon in {10,20,...,360} {
+    \pgfmathsetmacro\lon{\lon*pi/180}
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,pi,40}},
+        transformation={return view},
+        draw options={return "draw,line cap=round"},
+        v={
+            local p=Vector.stereographic_projection(Vector.sphere(Vector:new{\lon,u,1}):multiply(rot)):hscale(2)
+            if abs(p[1])<30 and abs(p[2])<30 then return p end
+            return nil
+        }
+    ]
+}
+\foreach \lat in {10,20,...,170} {
+    \pgfmathsetmacro\lat{\lat*pi/180}
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,2*pi,80}},
+        transformation={return view},
+        draw options={return "draw,line cap=round"},
+        v={
+            local p=Vector.stereographic_projection(Vector.sphere(Vector:new{u,\lat,1}):multiply(rot)):hscale(2)
+            if abs(p[1])<30 and abs(p[2])<30 then return p end
+            return nil
+        }
+    ]
+}
+\ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{A stereographic mesh under rotation.}
+\end{figure}
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+\useasboundingbox (-5,-5) rectangle (5,5);
+\pgfmathsetmacro{\VILLARCEAUANGLE}{10*pi/20}
+\ltdtappendlight[v={return Vector:new{1,1,1,1}}]
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.zyzrotation(Vector:new{\VILLARCEAUANGLE+pi/6,pi/3,pi/2}):multiply(Matrix.perspective(Vector:new{0,0,-1/30})):multiply(Matrix.scale_axis(Vector:new{1,0,0,1},0.35)):multiply(Matrix.scale_axis(Vector:new{0,1,0,1},0.35))}
+]
+\ltdtappendsurface[
+    name=villarceaucut,
+    uparams={return Vector:new{-1,1,8}},
+    vparams={return Vector:new{-1,1,8}},
+    v={return Vector:new{u,v,u/sqrt(15),1}:hscale(12):hadd(Vector:new{0,0,2,1})},
+    transformation={return view},
+    filter={return false}
+]
+\ltdtappendsurface[
+    uparams={return Vector:new{0,1,27}},
+    vparams={return Vector:new{0,1,21}},
+    v={return Vector.sphere(Vector:new{u*tau,v*tau,2}):hadd(Vector:new{8*cos(u*tau),8*sin(u*tau),2,1})},
+    fill options={
+        local shade=floor(100*lighting+0.5)
+        return "fill=white!"..tostring(shade).."!black!50!teal"
+    },
+    transformation={return view},
+    partition by={return {{surface="villarceaucut",keep="both",intersection_options="draw=red!80!black,line width=.9pt"}}},
+    filter={
+        local p=A:hadd(B):hadd(C):hscale(1/3):multiply(view:inverse())
+        return p[3]<p[1]/sqrt(15)+2
+    }
+]
+\ltdtappendsurface[
+    uparams={return Vector:new{0,1,27}},
+    vparams={return Vector:new{0,1,21}},
+    v={return Vector.sphere(Vector:new{u*tau,v*tau,2}):hadd(Vector:new{8*cos(u*tau),8*sin(u*tau),2,1})},
+    fill options={return "postaction={draw,line join=round}"},
+    transformation={return view},
+    partition by={return {{surface="villarceaucut",keep="both"}}},
+    filter={
+        local p=A:hadd(B):hadd(C):hscale(1/3):multiply(view:inverse())
+        return p[3]>p[1]/sqrt(15)+2
+    }
+]
+\ltdtdisplaysimplices
+\end{tikzpicture}
+\caption{A Villarceau section of a torus.}
+\end{figure}
+
 \end{document}

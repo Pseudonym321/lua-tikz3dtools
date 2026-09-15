@@ -1,0 +1,115 @@
+\documentclass[tikz,border=1cm]{standalone}
+\usepackage{lua-tikz3dtools}
+\def\NU{5}
+\def\NV{3}
+\pgfmathtruncatemacro{\streamcount}{\NU*\NV}
+\begin{document}
+\foreach \i in {1,...,100} {
+\pgfmathsetmacro{\i}{\i/100*0.99*2*pi}
+\begin{tikzpicture}
+    \useasboundingbox (-5,-5) rectangle (5,5);
+    \ltdtsetobject[
+        name={return "objs"},
+        object={
+            local emitter=Vector:new{3*cos(\i),3*sin(\i),0,1}
+            local sink=Vector:new{0,0,0,1}
+            local function field(u,v,w)
+                local p=Vector:new{u,v,w,1}
+                local ep=p:hsub(emitter)
+                local sp=p:hsub(sink)
+                local de=ep:hnorm()
+                local ds=sp:hnorm()
+                return ep:hscale(1/(de^3)):hsub(sp:hscale(1/(ds^3))):hnormalize()
+            end
+            local nu=\NU
+            local nv=\NV
+            local seed_radius=0.35
+            local emitter_guard=0.31
+            local sink_guard=0.31
+            local step=0.2
+            local max_steps=30
+            local curves={}
+            local n=1
+            for i=0,nu-1 do
+                local theta=tau*i/nu
+                for j=0,nv-1 do
+                    local phi=pi*(j+1)/(nv+1)
+                    local direction=Vector.sphere(Vector:new{theta,phi,1})
+                    local start=emitter:hadd(direction:hscale(seed_radius))
+                    local alpha,intervals=Streamline.rk4(
+                        field,
+                        start,
+                        step,
+                        max_steps,
+                        function(p)
+                            return p:hdistance(emitter)<=emitter_guard
+                                or p:hdistance(sink)<=sink_guard
+                        end
+                    )
+                    curves[n]={
+                        alpha=alpha,
+                        fd=2/intervals
+                    }
+                    n=n+1
+                end
+            end
+            return {
+                emitter=emitter,
+                sink=sink,
+                curves=curves,
+                view=Matrix.zyzrotation(Vector:new{7*pi/6,pi/3,pi/2})
+            }
+        }
+    ]
+    \ltdtappendlight[
+        v={return Vector:new{1,1,1,1}}
+    ]
+    \ltdtappendsurface[
+        uparams={return Vector:new{0,tau,16}},
+        vparams={return Vector:new{0,pi,10}},
+        v={
+            return Vector.sphere(Vector:new{u,v,0.28}):hadd(objs.emitter)
+        },
+        transformation={return objs.view},
+        fill options={
+            return function(lighting)
+                return "fill=red!"..tostring(floor(35+65*lighting)).."!black,draw=none"
+            end
+        }
+    ]
+    \ltdtappendsurface[
+        uparams={return Vector:new{0,tau,16}},
+        vparams={return Vector:new{0,pi,10}},
+        v={
+            return Vector.sphere(Vector:new{u,v,0.28}):hadd(objs.sink)
+        },
+        transformation={return objs.view},
+        fill options={
+            return function(lighting)
+                return "fill=blue!"..tostring(floor(35+65*lighting)).."!black,draw=none"
+            end
+        }
+    ]
+    \foreach \j in {1,...,\streamcount} {
+        \ltdtappendsurface[
+            uparams={
+                local c=objs.curves[\j]
+                return Vector:new{c.fd,1-c.fd,10}
+            },
+            vparams={return Vector:new{0,tau,6}},
+            v={
+                local c=objs.curves[\j]
+                local frame=Geometry.frenet(c.alpha,u,c.fd)
+                return Vector:new{0,0.065*cos(v),0.065*sin(v),1}:multiply(frame)
+            },
+            transformation={return objs.view},
+            fill options={
+                return function(lighting)
+                    return "fill=white!"..tostring(floor(20+80*lighting)).."!black,draw=none"
+                end
+            }
+        ]
+    }
+    \ltdtdisplaysimplices
+\end{tikzpicture}}
+\end{document}

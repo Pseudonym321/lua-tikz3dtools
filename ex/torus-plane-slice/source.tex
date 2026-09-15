@@ -1,0 +1,48 @@
+\documentclass[tikz, border=1cm]{standalone}
+\usepackage{lua-tikz3dtools}
+\begin{document}
+\foreach \i in {-12,...,12} {
+\begin{tikzpicture}
+    \useasboundingbox (-5,-5) rectangle (5,5);
+    \ltdtsetobject[
+        name={return "objs"},
+        object={
+            {
+                view = Matrix.zyzrotation(Vector:new{pi/6,pi/3,pi/2}),
+                num = \i/3
+            }
+        }
+    ]
+    \ltdtappendlight[v={return Vector:new{1,1,1,1}}]
+    \ltdtappendsurface[
+        name=S,
+        uparams={return Vector:new{-3,3,10}},
+        vparams={return Vector:new{-3,3,10}},
+        v={return Vector:new{u,objs.num,0,1}:hadd(Vector:new{0,0,v,1}):multiply(objs.view)}
+    ]
+    \ltdtappendsurface[
+        uparams={return Vector:new{0,1,20}},
+        vparams={return Vector:new{0,1,20}},
+        v={return Vector.sphere(Vector:new{u*tau, v*tau, 1}):hadd(Vector.sphere(Vector:new{u*tau,pi/2,2})):multiply(objs.view)},
+        fill options={
+            return function(lighting)
+                return "fill=white!" .. tostring(floor(lighting * 100)) .. "!black"
+            end
+        },
+        partition by={
+            return {
+                {surface="S",keep="positive",intersection_options="draw=red"}
+            }
+        },
+        filter={
+            local inv = objs.view:inverse()
+            for i, p in ipairs({A,B,C}) do
+                p = p:multiply(inv)
+                if p[2] > objs.num + 0.01 then return false end 
+            end
+            return true
+        }
+    ]
+    \ltdtdisplaysimplices
+\end{tikzpicture}}
+\end{document}

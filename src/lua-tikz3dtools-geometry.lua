@@ -3,8 +3,78 @@
 local Geometry = {}
 Geometry.__index = Geometry
 
+local AABBTree = require "lua-tikz3dtools-aabbtree"
+local Recovery = require "lua-tikz3dtools-recovery"
+
+local function log_line(message)
+    local prefix = ("Time:%s "):format(os.date("%X"))
+    local body = tostring(message):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    local room = 76 - #prefix
+    if #body > room then body = body:sub(1, math.max(1, room - 3)) .. "..." end
+    local line = prefix .. body
+    if texio and texio.write_nl then
+        texio.write_nl("term and log", line)
+    else
+        io.stdout:write(line, "\n")
+        io.stdout:flush()
+    end
+end
+
 local Vector = nil
 local Matrix = nil
+
+-- Geometric predicates operate in caller coordinates, not normalized parameter
+-- space.  Tolerances therefore scale with the geometry being tested instead of
+-- assuming that one drawing unit is a privileged size.
+local GEOMETRY_REL_EPS = 1e-12
+local PARTITION_REL_EPS = 1e-10
+local MERGE_REL_EPS = 1e-7
+local MIN_GEOMETRY_SCALE = 1e-150
+
+local function coordinate_scale(...)
+    local scale = MIN_GEOMETRY_SCALE
+    for i = 1, select("#", ...) do
+        local point = select(i, ...)
+        if point then
+            for j = 1, #point - 1 do
+                scale = math.max(scale, math.abs(point[j]))
+            end
+        end
+    end
+    return scale
+end
+
+local function point_epsilon(relative, ...)
+    return (relative or GEOMETRY_REL_EPS) * coordinate_scale(...)
+end
+
+local function simplex_length_scale(simplex)
+    local scale = MIN_GEOMETRY_SCALE
+    for i = 1, #simplex do
+        local a = Vector:_new(simplex[i])
+        for j = i + 1, #simplex do
+            local b = Vector:_new(simplex[j])
+            scale = math.max(scale, a:_hdistance(b))
+        end
+    end
+    return scale
+end
+
+local function simplex_length_epsilon(simplex, relative)
+    local scale = MIN_GEOMETRY_SCALE
+    for i = 1, #simplex do
+        local point = simplex[i]
+        for j = 1, #point - 1 do
+            scale = math.max(scale, math.abs(point[j]))
+        end
+    end
+    return (relative or GEOMETRY_REL_EPS) * scale
+end
+
+local function triangle_area_epsilon(triangle, relative)
+    local scale = simplex_length_scale(triangle)
+    return (relative or GEOMETRY_REL_EPS) * scale * scale
+end
 
 --- Vector and Matrix injection
 --- @param vclass Vector the class is its own metatable
@@ -19,7 +89,7 @@ end
 --- @param other Vector
 --- @return boolean
 function Geometry.hpoint_point_intersecting(self, other)
-    return self:_hdistance(other) < 1e-12
+    return self:_hdistance(other) <= point_epsilon(GEOMETRY_REL_EPS, self, other)
 end
 
 --- Check if a homogeneous point is in the triangular prism defined by triangle T
@@ -27,25 +97,10 @@ end
 --- @param T Matrix
 --- @return boolean
 function Geometry.hpoint_in_triangular_prism(self, T)
-    local A = Vector:_new(T[1])
-    local B = Vector:_new(T[2])
-    local C = Vector:_new(T[3])
-
-    local v0 = C:_hsub(A)
-    local v1 = B:_hsub(A)
-    local v2 = self:_hsub(A)
-
-    local d00 = v0:_hinner(v0)
-    local d01 = v0:_hinner(v1)
-    local d11 = v1:_hinner(v1)
-    local d20 = v2:_hinner(v0)
-    local d21 = v2:_hinner(v1)
-    local denom = d00 * d11 - d01 * d01
-    local v = (d11 * d20 - d01 * d21) / denom
-    local w = (d00 * d21 - d01 * d20) / denom
-    local u = 1 - v - w
-    local eps = 1e-12
-    return u >= -3*eps and v >= -3*eps and w >= -3*eps
+    local bary = Geometry.hpoint_triangle_barycentric(self, T)
+    if not bary then return false end
+    local eps = 3 * GEOMETRY_REL_EPS
+    return bary[1] >= -eps and bary[2] >= -eps and bary[3] >= -eps
 end
 
 --- Compute barycentric coordinates of a point with respect to a triangle.
@@ -68,7 +123,9 @@ function Geometry.hpoint_triangle_barycentric(self, T)
     local d21 = v2:_hinner(v1)
     local denom = d00 * d11 - d01 * d01
 
-    if math.abs(denom) < 1e-12 then
+    local edge_scale = simplex_length_scale(T)
+    local denom_epsilon = GEOMETRY_REL_EPS * edge_scale^4
+    if math.abs(denom) <= denom_epsilon then
         return nil
     end
 
@@ -89,11 +146,13 @@ function Geometry.hpoint_from_triangle_barycentric(T, bary)
     return A:_add(B):_add(C)
 end
 
---- Clip a line segment to a triangle using barycentric half-spaces.
---- @param self Matrix
---- @param T Matrix
---- @return Matrix|nil
-function Geometry.hclip_line_segment_to_triangle(self, T)
+--- Compute the parameter interval of a line segment lying inside a triangle.
+--- The segment is P(t)=(1-t)P0+tP1 for 0<=t<=1.
+--- @param self Matrix 2-row line segment
+--- @param T Matrix triangle
+--- @return number|nil t_min
+--- @return number|nil t_max
+function Geometry.hclip_line_segment_to_triangle_interval(self, T)
     local P0 = Vector:_new(self[1])
     local P1 = Vector:_new(self[2])
     local bary0 = Geometry.hpoint_triangle_barycentric(P0, T)
@@ -101,7 +160,7 @@ function Geometry.hclip_line_segment_to_triangle(self, T)
     local eps = 1e-12
 
     if bary0 == nil or bary1 == nil then
-        return nil
+        return nil, nil
     end
 
     local t_min = 0
@@ -113,7 +172,7 @@ function Geometry.hclip_line_segment_to_triangle(self, T)
 
         if math.abs(delta) < eps then
             if start_val < -3 * eps then
-                return nil
+                return nil, nil
             end
         else
             local boundary_t = (-3 * eps - start_val) / delta
@@ -123,77 +182,43 @@ function Geometry.hclip_line_segment_to_triangle(self, T)
                 if boundary_t < t_max then t_max = boundary_t end
             end
             if t_min > t_max + eps then
-                return nil
+                return nil, nil
             end
         end
     end
 
     if t_max < 0 or t_min > 1 then
-        return nil
+        return nil, nil
     end
 
     t_min = math.max(0, t_min)
     t_max = math.min(1, t_max)
     if t_max - t_min < eps then
+        return nil, nil
+    end
+
+    return t_min, t_max
+end
+
+--- Clip a line segment to a triangle using barycentric half-spaces.
+--- @param self Matrix
+--- @param T Matrix
+--- @return Matrix|nil
+function Geometry.hclip_line_segment_to_triangle(self, T)
+    local t_min, t_max = Geometry.hclip_line_segment_to_triangle_interval(self, T)
+    if t_min == nil then
         return nil
     end
 
+    local P0 = Vector:_new(self[1])
+    local P1 = Vector:_new(self[2])
     local Q0 = P0:_scale(1 - t_min):_add(P1:_scale(t_min))
     local Q1 = P0:_scale(1 - t_max):_add(P1:_scale(t_max))
-    if Q0:_hdistance(Q1) < eps then
+    if Q0:_hdistance(Q1) <= point_epsilon(GEOMETRY_REL_EPS, P0, P1, Q0, Q1) then
         return nil
     end
 
     return Matrix:_new{Q0, Q1}
-end
-
---- Reclip triangle-attached embedded line segments onto a child triangle.
---- @param parent_triangle Matrix
---- @param child_triangle Matrix
---- @param embedded_segments table|nil
---- @return table|nil
-function Geometry.reclip_embedded_segments(parent_triangle, child_triangle, embedded_segments)
-    if embedded_segments == nil then
-        return nil
-    end
-
-    local reclipped = {}
-    for _, segment in ipairs(embedded_segments) do
-        local start_point = Geometry.hpoint_from_triangle_barycentric(
-            parent_triangle,
-            Vector:_new(segment.start)
-        )
-        local stop_point = Geometry.hpoint_from_triangle_barycentric(
-            parent_triangle,
-            Vector:_new(segment.stop)
-        )
-        local clipped = Geometry.hclip_line_segment_to_triangle(
-            Matrix:_new{start_point, stop_point},
-            child_triangle
-        )
-
-        if clipped ~= nil then
-            local clipped_start = Vector:_new(clipped[1])
-            local clipped_stop = Vector:_new(clipped[2])
-            local start_bary = Geometry.hpoint_triangle_barycentric(Vector:_new(clipped[1]), child_triangle)
-            local stop_bary = Geometry.hpoint_triangle_barycentric(Vector:_new(clipped[2]), child_triangle)
-            if start_bary ~= nil and stop_bary ~= nil then
-                table.insert(reclipped, {
-                    start = start_bary,
-                    stop = stop_bary,
-                    drawoptions = segment.drawoptions,
-                    arrowtail = clipped_start:_hdistance(start_point) <= 1e-9 and segment.arrowtail or nil,
-                    arrowtip = clipped_stop:_hdistance(stop_point) <= 1e-9 and segment.arrowtip or nil,
-                    arrowscale = segment.arrowscale
-                })
-            end
-        end
-    end
-
-    if #reclipped == 0 then
-        return nil
-    end
-    return reclipped
 end
 
 
@@ -201,14 +226,7 @@ local function copy_simplex_metadata_for_part(source, part_simplex)
     local meta = {}
     for k, v in pairs(source) do
         if k ~= "simplex" and k ~= "type" and k ~= "bbox2" then
-            if k == "embedded_segments" and source.type == "triangle" then
-                local reclipped = Geometry.reclip_embedded_segments(source.simplex, part_simplex, v)
-                if reclipped ~= nil then
-                    meta[k] = reclipped
-                end
-            else
-                meta[k] = v
-            end
+            meta[k] = v
         end
     end
     return meta
@@ -220,12 +238,10 @@ local function normalize_partition_parts(parts, expected_rows)
     end
 
     local function is_degenerate_part(part)
-        local eps = 1e-10
-
         if expected_rows == 2 then
             local A = Vector:_new(part[1])
             local B = Vector:_new(part[2])
-            return A:_hdistance(B) <= eps
+            return A:_hdistance(B) <= simplex_length_epsilon(part, PARTITION_REL_EPS)
         end
 
         if expected_rows == 3 then
@@ -233,7 +249,7 @@ local function normalize_partition_parts(parts, expected_rows)
             local B = Vector:_new(part[2])
             local C = Vector:_new(part[3])
             local area_twice = (B:_hsub(A)):_hcross(C:_hsub(A)):hnorm()
-            return area_twice <= eps
+            return area_twice <= triangle_area_epsilon(part, PARTITION_REL_EPS)
         end
 
         return false
@@ -304,7 +320,11 @@ end
 --- @return boolean
 function Geometry.hcollinear(self, other)
     local cross = self:_hcross(other)
-    return cross:hnorm() < 1e-12
+    local scale = math.max(
+        self:hnorm() * other:hnorm(),
+        MIN_GEOMETRY_SCALE * MIN_GEOMETRY_SCALE
+    )
+    return cross:hnorm() <= GEOMETRY_REL_EPS * scale
 end
 
 --- Check opposite direction of two homogeneous vectors
@@ -537,7 +557,10 @@ function Geometry.htriangle_triangle_intersections(self, tri)
         Matrix:_new{tri[3], tri[1]}
     }
     local points = {}
-    local merge_eps = 1e-7
+    local merge_eps = MERGE_REL_EPS * math.max(
+        simplex_length_scale(self),
+        simplex_length_scale(tri)
+    )
 
     local function same_point(p1, p2)
         return p1:_hdistance(p2) < merge_eps
@@ -723,7 +746,10 @@ function Geometry.hpartition_triangle_by_triangle(self, tri)
     local I = Geometry.htriangle_triangle_intersections(self, tri)
     if I == nil then return nil end
 
-    local merge_eps = 1e-7
+    local merge_eps = MERGE_REL_EPS * math.max(
+        simplex_length_scale(self),
+        simplex_length_scale(tri)
+    )
     local tri_basis = tri:hto_basis()
     local edges1 = {
         Matrix:_new{self[1], self[2]},
@@ -862,7 +888,11 @@ end
 function Geometry.hpartition_triangle_by_edge_planes(self, tri)
     local z_min = math.min(self[1][3], self[2][3], self[3][3])
     local z_max = math.max(self[1][3], self[2][3], self[3][3])
-    local z_margin = math.max((z_max - z_min) * 0.1, 1e-6)
+    local coordinate_margin = point_epsilon(
+        PARTITION_REL_EPS,
+        self[1], self[2], self[3], tri[1], tri[2], tri[3]
+    )
+    local z_margin = math.max((z_max - z_min) * 0.1, coordinate_margin)
     z_min = z_min - z_margin
     z_max = z_max + z_margin
 
@@ -876,7 +906,14 @@ function Geometry.hpartition_triangle_by_edge_planes(self, tri)
     for _, edge in ipairs(edges) do
         local A = edge[1]
         local B = edge[2]
-        if math.abs(A[1] - B[1]) < 1e-12 and math.abs(A[2] - B[2]) < 1e-12 then
+        local dx = A[1] - B[1]
+        local dy = A[2] - B[2]
+        local xy_scale = math.max(
+            MIN_GEOMETRY_SCALE,
+            math.abs(A[1]), math.abs(A[2]),
+            math.abs(B[1]), math.abs(B[2])
+        )
+        if math.sqrt(dx * dx + dy * dy) <= GEOMETRY_REL_EPS * xy_scale then
             goto continue_edge
         end
         local BL = Vector:_new{A[1], A[2], z_min, 1}
@@ -998,6 +1035,30 @@ function Geometry.htriangle_triangle_occlusion_sort(self, T)
     return nil
 end
 
+
+--- Return the required ordering for a surface patch and a curve fragment it
+--- supports.  true means S1 must be rendered before S2; false means S2 must
+--- be rendered before S1.  nil means there is no support relationship.
+--- Support is deliberately local: every non-supporting simplex still goes
+--- through the ordinary occlusion predicates.
+function Geometry.support_order(S1, S2)
+    if S1.surface_patch_id ~= nil
+        and S2.support_patch_ids ~= nil
+        and S2.support_patch_ids[S1.surface_patch_id]
+    then
+        return true
+    end
+
+    if S2.surface_patch_id ~= nil
+        and S1.support_patch_ids ~= nil
+        and S1.support_patch_ids[S2.surface_patch_id]
+    then
+        return false
+    end
+
+    return nil
+end
+
 --- Top-level occlusion sort dispatcher
 --- @param S1 table simplex record
 --- @param S2 table simplex record
@@ -1028,89 +1089,10 @@ function Geometry.occlusion_sort_simplices(S1, S2)
     end
 end
 
---- Build a uniform 2D grid index from a list of simplex records.
---- Each record must have a .bbox2 field (pre-computed).
---- @param simplices table list of simplex records
---- @param cell_size number grid cell width/height
---- @return table grid  { cells = {}, cell_size = N, ... }
-function Geometry.build_grid(simplices, cell_size)
-    local cells = {}
-    local function key(cx, cy)
-        return cx .. "," .. cy
-    end
-    for i, s in ipairs(simplices) do
-        local bb = s.bbox2
-        if bb then
-            local cx0 = math.floor(bb.min[1] / cell_size)
-            local cy0 = math.floor(bb.min[2] / cell_size)
-            local cx1 = math.floor(bb.max[1] / cell_size)
-            local cy1 = math.floor(bb.max[2] / cell_size)
-            for cx = cx0, cx1 do
-                for cy = cy0, cy1 do
-                    local k = key(cx, cy)
-                    if not cells[k] then cells[k] = {} end
-                    table.insert(cells[k], i)
-                end
-            end
-        end
-    end
-    return { cells = cells, cell_size = cell_size, key = key }
-end
-
---- Iterate over candidate pairs that share at least one grid cell.
---- Returns a set of {i,j} pairs (i < j) as keys in a table.
---- @param grid table
---- @return table  set of "i,j" keys
-function Geometry.grid_candidate_pairs(grid)
-    local pairs_seen = {}
-    for _, bucket in pairs(grid.cells) do
-        for a = 1, #bucket do
-            for b = a + 1, #bucket do
-                local i, j = bucket[a], bucket[b]
-                if i > j then i, j = j, i end
-                local k = i .. "," .. j
-                pairs_seen[k] = { i, j }
-            end
-        end
-    end
-    return pairs_seen
-end
-
---- Return candidate indices whose grid cells overlap a 2D bbox.
---- @param grid table
---- @param bbox table
---- @return table
-function Geometry.grid_candidate_indices(grid, bbox)
-    local seen = {}
-    local indices = {}
-    local cx0 = math.floor(bbox.min[1] / grid.cell_size)
-    local cy0 = math.floor(bbox.min[2] / grid.cell_size)
-    local cx1 = math.floor(bbox.max[1] / grid.cell_size)
-    local cy1 = math.floor(bbox.max[2] / grid.cell_size)
-
-    for cx = cx0, cx1 do
-        for cy = cy0, cy1 do
-            local bucket = grid.cells[grid.key(cx, cy)]
-            if bucket then
-                for _, idx in ipairs(bucket) do
-                    if not seen[idx] then
-                        seen[idx] = true
-                        indices[#indices + 1] = idx
-                    end
-                end
-            end
-        end
-    end
-
-    table.sort(indices)
-    return indices
-end
-
-
 --- Strongly connected components sort for simplices based on occlusion.
---- Uses a 2D grid to reduce pair comparisons, Tarjan's SCC to detect cycles,
+--- Uses a 2D AABB hierarchy to reduce pair comparisons, Tarjan's SCC to detect cycles,
 --- and edge-plane partitioning to break them.
---- @param simplices table list of simplex records (each must have .bbox2)
+--- @param simplices table list of simplex records
 --- @param depth number|nil
 --- @return table sorted list
 --- @return table diagnostics
@@ -1125,44 +1107,74 @@ function Geometry.scc(simplices, depth)
         unresolved_cycles = false,
         unresolved_component_count = 0,
         max_depth_reached = false,
+        candidate_pairs = 0,
+        exact_occlusion_tests = 0,
+        graph_edges = 0,
+        support_edges = 0,
+        scc_components = 0,
+        cyclic_components = 0,
+        cycle_pair_subdivisions = 0,
+        cycle_temporary_pieces = 0,
     }
 
-    -- Estimate cell size from average bbox diagonal
-    local total_diag = 0
-    local diag_count = 0
-    for _, s in ipairs(simplices) do
-        if s.bbox2 then
-            local dx = s.bbox2.max[1] - s.bbox2.min[1]
-            local dy = s.bbox2.max[2] - s.bbox2.min[2]
-            total_diag = total_diag + math.sqrt(dx*dx + dy*dy)
-            diag_count = diag_count + 1
+    -- Occlusion can only occur between simplices whose projected 2D AABBs
+    -- overlap.  The BVH supplies each such candidate pair exactly once; the
+    -- existing exact occlusion predicates remain authoritative.
+    local occlusion_entries = {}
+    for i, simplex in ipairs(simplices) do
+        if simplex.type ~= "label" and simplex.type ~= "point" then
+            simplex.bbox2 = simplex.bbox2 or simplex.simplex:get_bbox2()
+            occlusion_entries[#occlusion_entries + 1] = {
+                index = i,
+                box = simplex.bbox2,
+            }
         end
     end
-    local cell_size = (diag_count > 0) and (total_diag / diag_count * 2) or 1.0
-    if cell_size < 1e-6 then cell_size = 1.0 end
-
-    local grid = Geometry.build_grid(simplices, cell_size)
-    local candidate_pairs = Geometry.grid_candidate_pairs(grid)
+    local occlusion_tree = AABBTree.build(occlusion_entries, 2)
 
     local adj = {}
-    for i = 1, n do adj[i] = {} end
+    local adj_set = {}
+    for i = 1, n do
+        adj[i] = {}
+        adj_set[i] = {}
+    end
 
-    for _, pair in pairs(candidate_pairs) do
-        local i, j = pair[1], pair[2]
+    occlusion_tree:foreach_overlapping_pair(function(i, j)
+        diagnostics.candidate_pairs = diagnostics.candidate_pairs + 1
         local si, sj = simplices[i], simplices[j]
-        if si.type ~= "label" and sj.type ~= "label"
-           and si.type ~= "point" and sj.type ~= "point"
-        then
-            -- Use cached bboxes for the overlap check
-            if si.simplex:bboxes_overlap2(sj.simplex, si.bbox2, sj.bbox2) then
+        -- Keep this exact bbox predicate as a defensive invariant check even
+        -- though the BVH has already established the same conservative test.
+        if si.simplex:bboxes_overlap2(sj.simplex, si.bbox2, sj.bbox2) then
+            local support_cmp = Geometry.support_order(si, sj)
+            if support_cmp == true then
+                adj[i][#adj[i] + 1] = j
+                adj_set[i][j] = true
+                diagnostics.graph_edges = diagnostics.graph_edges + 1
+                diagnostics.support_edges = diagnostics.support_edges + 1
+            elseif support_cmp == false then
+                adj[j][#adj[j] + 1] = i
+                adj_set[j][i] = true
+                diagnostics.graph_edges = diagnostics.graph_edges + 1
+                diagnostics.support_edges = diagnostics.support_edges + 1
+            else
+                diagnostics.exact_occlusion_tests = diagnostics.exact_occlusion_tests + 1
                 local cmp = Geometry.occlusion_sort_simplices(si, sj)
                 if cmp == true then
-                    table.insert(adj[i], j)
+                    adj[i][#adj[i] + 1] = j
+                    adj_set[i][j] = true
+                    diagnostics.graph_edges = diagnostics.graph_edges + 1
                 elseif cmp == false then
-                    table.insert(adj[j], i)
+                    adj[j][#adj[j] + 1] = i
+                    adj_set[j][i] = true
+                    diagnostics.graph_edges = diagnostics.graph_edges + 1
                 end
             end
         end
+    end)
+
+    -- Graph algorithms must not depend on BVH traversal order.
+    for i = 1, n do
+        table.sort(adj[i])
     end
 
     -- Tarjan's SCC
@@ -1216,41 +1228,85 @@ function Geometry.scc(simplices, depth)
     end
 
     diagnostics.had_cycle = has_cycle
+    diagnostics.scc_components = #components
+    diagnostics.cyclic_components = cycle_component_count
 
+    -- Cycles are a rendering-order problem, so subdivisions made solely to
+    -- break a cycle are temporary render fragments.  For each cyclic SCC,
+    -- choose one triangle pair and subdivide only those two triangles by one
+    -- another's projected edge planes.  All other members of the SCC remain
+    -- untouched during this resolution step.
+    --
+    -- The exact edge-plane partition routine is unchanged.  This block only
+    -- narrows the lifetime and scope of the fragments it produces.
     if has_cycle and depth < max_depth then
-        local to_remove = {}
-        local to_add = {}
+        local replacements = {}
+
+        local function temporary_cycle_parts(source, cutter)
+            local parts = Geometry.hpartition_triangle_by_edge_planes(
+                source.simplex,
+                cutter.simplex
+            )
+            local normalized = normalize_partition_parts(parts, 3)
+            if normalized == nil then
+                return nil
+            end
+
+            local result = {}
+            for _, part in ipairs(normalized) do
+                local fragment = {
+                    simplex = part,
+                    type = "triangle",
+                    bbox2 = part:get_bbox2(),
+                }
+                local meta = copy_simplex_metadata_for_part(source, part)
+                for k, v in pairs(meta) do fragment[k] = v end
+                result[#result + 1] = fragment
+            end
+            return result
+        end
 
         for _, comp in ipairs(components) do
             if #comp > 1 then
-                local split_done = false
-                for ci = 1, #comp do
-                    if split_done then break end
-                    local idx = comp[ci]
-                    if simplices[idx].type == "triangle" and not to_remove[idx] then
-                        for cj = 1, #comp do
-                            if cj ~= ci then
-                                local other_idx = comp[cj]
-                                if simplices[other_idx].type == "triangle" then
-                                    local parts = Geometry.hpartition_triangle_by_edge_planes(
-                                        simplices[idx].simplex,
-                                        simplices[other_idx].simplex)
-                                    local normalized = normalize_partition_parts(parts, 3)
-                                    if normalized ~= nil then
-                                        to_remove[idx] = true
-                                        for _, part in ipairs(normalized) do
-                                            local ns = {
-                                                simplex = part,
-                                                type = "triangle",
-                                                bbox2 = part:get_bbox2()
-                                            }
-                                            local meta = copy_simplex_metadata_for_part(simplices[idx], part)
-                                            for k, v in pairs(meta) do ns[k] = v end
-                                            table.insert(to_add, ns)
-                                        end
-                                        split_done = true
-                                        break
-                                    end
+                -- Tarjan's pop order is deterministic here, but sorting makes
+                -- pair selection explicitly depend only on original indices.
+                local members = {}
+                for _, idx in ipairs(comp) do members[#members + 1] = idx end
+                table.sort(members)
+
+                local function directly_related(i, j)
+                    return adj_set[i][j] == true or adj_set[j][i] == true
+                end
+
+                local pair_resolved = false
+                for ai = 1, #members - 1 do
+                    if pair_resolved then break end
+                    local a_idx = members[ai]
+                    local a = simplices[a_idx]
+                    if a.type == "triangle" then
+                        for bi = ai + 1, #members do
+                            local b_idx = members[bi]
+                            local b = simplices[b_idx]
+                            if b.type == "triangle"
+                                and directly_related(a_idx, b_idx)
+                            then
+                                -- Attempt the same subdivision idea in both
+                                -- directions.  A direction that needs no split
+                                -- simply keeps its original simplex.
+                                local a_parts = temporary_cycle_parts(a, b)
+                                local b_parts = temporary_cycle_parts(b, a)
+
+                                if a_parts ~= nil or b_parts ~= nil then
+                                    replacements[a_idx] = a_parts or {a}
+                                    replacements[b_idx] = b_parts or {b}
+                                    diagnostics.cycle_pair_subdivisions =
+                                        diagnostics.cycle_pair_subdivisions + 1
+                                    diagnostics.cycle_temporary_pieces =
+                                        diagnostics.cycle_temporary_pieces
+                                        + #(replacements[a_idx])
+                                        + #(replacements[b_idx])
+                                    pair_resolved = true
+                                    break
                                 end
                             end
                         end
@@ -1259,19 +1315,39 @@ function Geometry.scc(simplices, depth)
             end
         end
 
-        if next(to_remove) then
-            local new_simplices = {}
-            for i, s in ipairs(simplices) do
-                if not to_remove[i] then
-                    table.insert(new_simplices, s)
+        if next(replacements) then
+            local temporary_simplices = {}
+            for i, simplex in ipairs(simplices) do
+                local replacement = replacements[i]
+                if replacement ~= nil then
+                    for _, fragment in ipairs(replacement) do
+                        temporary_simplices[#temporary_simplices + 1] = fragment
+                    end
+                else
+                    temporary_simplices[#temporary_simplices + 1] = simplex
                 end
             end
-            for _, s in ipairs(to_add) do
-                table.insert(new_simplices, s)
-            end
-            local sorted, recursive_diagnostics = Geometry.scc(new_simplices, depth + 1)
+
+            local sorted, recursive_diagnostics = Geometry.scc(
+                temporary_simplices,
+                depth + 1
+            )
             recursive_diagnostics = recursive_diagnostics or diagnostics
-            recursive_diagnostics.had_cycle = recursive_diagnostics.had_cycle or has_cycle
+            recursive_diagnostics.had_cycle =
+                recursive_diagnostics.had_cycle or has_cycle
+            for _, key in ipairs({
+                "candidate_pairs",
+                "exact_occlusion_tests",
+                "graph_edges",
+                "support_edges",
+                "scc_components",
+                "cyclic_components",
+                "cycle_pair_subdivisions",
+                "cycle_temporary_pieces",
+            }) do
+                recursive_diagnostics[key] =
+                    (recursive_diagnostics[key] or 0) + (diagnostics[key] or 0)
+            end
             return sorted, recursive_diagnostics
         end
     end
@@ -1281,11 +1357,9 @@ function Geometry.scc(simplices, depth)
         diagnostics.unresolved_component_count = cycle_component_count
         diagnostics.max_depth_reached = depth >= max_depth
 
-        local warning = (
-            "Unresolved occlusion cycle(s) remain after SCC sorting (%d component(s) at depth %d); rendering order may be unstable."
-        ):format(cycle_component_count, depth)
-
-        print(warning)
+        local warning = "Unresolved occlusion cycle(s) remain after SCC sorting "
+            .. "(%d component(s) at depth %d); rendering order may be unstable."
+        log_line(warning:format(cycle_component_count, depth))
     end
 
     -- Topological sort (DFS)
@@ -1298,53 +1372,74 @@ function Geometry.scc(simplices, depth)
         for _, v in ipairs(adj[u]) do
             visit(v)
         end
-        table.insert(sorted, 1, simplices[u])
+        sorted[#sorted + 1] = simplices[u]
     end
 
     for i = 1, n do visit(i) end
+
+    -- DFS completion order is reversed once to obtain the required draw order
+    -- without repeated front insertion into the Lua array.
+    for i = 1, math.floor(#sorted / 2) do
+        local j = #sorted - i + 1
+        sorted[i], sorted[j] = sorted[j], sorted[i]
+    end
 
     return sorted, diagnostics
 end
 
 --- Partition simplices by their parents recursively, retaining all terminal pieces.
---- Only tests pairs that overlap in screen-space (bbox2).
+--- Uses a 3D AABB tree to query only parents that can intersect each piece.
 --- Skips self-partitioning.
 --- @param simplices table
 --- @param parents table
---- @return table
+--- @return table terminal pieces
+--- @return table diagnostics
 function Geometry.partition_simplices_by_parents(simplices, parents)
     local result = {}
+    local stats = {
+        input_simplices = #simplices,
+        indexed_parents = 0,
+        candidate_queries = 0,
+        candidate_parents = 0,
+        exact_partition_tests = 0,
+        successful_splits = 0,
+        pieces_created = 0,
+        max_depth = 0,
+        depth_limit_hits = 0,
+        output_pieces = 0,
+    }
 
-    -- Pre-compute parent bbox caches and build a 2D grid index so each piece
-    -- only checks nearby parents before the more expensive 3D overlap test.
+    -- Parent geometry is static throughout recursive subdivision.  Build one
+    -- 3D BVH and use it only as a conservative broad phase; exact overlap and
+    -- partition predicates below remain authoritative.
     local parent_bbox3 = {}
-    local parent_indices = {}
-    local total_diag = 0
-    local diag_count = 0
+    local parent_entries = {}
     for pi, parent in ipairs(parents) do
         if parent.type ~= "point" and parent.type ~= "label" then
-            parent_bbox3[pi] = parent.simplex:get_bbox3()
+            local bbox3 = parent.simplex:get_bbox3()
+            parent_bbox3[pi] = bbox3
             parent.bbox2 = parent.bbox2 or parent.simplex:get_bbox2()
-            parent_indices[#parent_indices + 1] = pi
-
-            local dx = parent.bbox2.max[1] - parent.bbox2.min[1]
-            local dy = parent.bbox2.max[2] - parent.bbox2.min[2]
-            total_diag = total_diag + math.sqrt(dx * dx + dy * dy)
-            diag_count = diag_count + 1
+            parent_entries[#parent_entries + 1] = {
+                index = pi,
+                box = bbox3,
+            }
         end
     end
 
-    local cell_size = (diag_count > 0) and (total_diag / diag_count * 2) or 1.0
-    if cell_size < 1e-6 then cell_size = 1.0 end
-    local parent_grid = Geometry.build_grid(parents, cell_size)
+    local parent_tree = AABBTree.build(parent_entries, 3)
+    stats.indexed_parents = #parent_entries
 
     local max_depth = 50
 
     local function partition_recursive(piece, depth, skip_parent)
         depth = depth or 0
-        if depth >= max_depth
-            or piece.type == "point"
-            or piece.type == "label" then
+        if depth > stats.max_depth then stats.max_depth = depth end
+        if depth >= max_depth then
+            stats.depth_limit_hits = stats.depth_limit_hits + 1
+            table.insert(result, piece)
+            return
+        end
+        if piece.type == "point" or piece.type == "label" then
             table.insert(result, piece)
             return
         end
@@ -1360,17 +1455,22 @@ function Geometry.partition_simplices_by_parents(simplices, parents)
         piece.bbox2 = piece.bbox2 or piece.simplex:get_bbox2()
         local piece_bbox2 = piece.bbox2
         local piece_bbox3 = piece.simplex:get_bbox3()
-        local candidate_indices = parent_indices
-
-        if piece_bbox2 then
-            candidate_indices = Geometry.grid_candidate_indices(parent_grid, piece_bbox2)
-        end
+        local candidate_indices = {}
+        stats.candidate_queries = stats.candidate_queries + 1
+        parent_tree:query(piece_bbox3, function(pi)
+            candidate_indices[#candidate_indices + 1] = pi
+        end)
+        stats.candidate_parents = stats.candidate_parents + #candidate_indices
+        -- Preserve the original parent-index decision order independently of
+        -- BVH traversal order.  This matters because the first successful
+        -- partition determines the recursive branch taken next.
+        table.sort(candidate_indices)
 
         for _, pi in ipairs(candidate_indices) do
             local parent = parents[pi]
-            if pi ~= skip_parent and piece ~= parent
-                and parent.type ~= "point" and parent.type ~= "label"
-                and piece.type ~= "point" and piece.type ~= "label"
+            if pi ~= skip_parent
+                and piece ~= parent
+                and Geometry.support_order(piece, parent) == nil
             then
                 local pb = parent_bbox3[pi]
                 local parent_bbox2 = parent.bbox2
@@ -1383,19 +1483,22 @@ function Geometry.partition_simplices_by_parents(simplices, parents)
                     local piece_type = piece.type
                     local parent_type = parent.type
 
-                    if parent_type == "point" and piece_type == "line segment" then
-                        parts = Geometry.hpartition_line_segment_by_point(piece.simplex, parent.simplex)
-                    elseif parent_type == "line segment" and piece_type == "line segment" then
+                    if parent_type == "line segment" and piece_type == "line segment" then
+                        stats.exact_partition_tests = stats.exact_partition_tests + 1
                         parts = Geometry.hpartition_line_segment_by_line_segment(piece.simplex, parent.simplex)
                     elseif parent_type == "triangle" and piece_type == "line segment" then
+                        stats.exact_partition_tests = stats.exact_partition_tests + 1
                         parts = Geometry.hpartition_line_segment_by_triangle(piece.simplex, parent.simplex)
                     elseif parent_type == "triangle" and piece_type == "triangle" then
+                        stats.exact_partition_tests = stats.exact_partition_tests + 1
                         parts = Geometry.hpartition_triangle_by_triangle(piece.simplex, parent.simplex)
                     end
 
                     local expected_rows = (piece_type == "triangle") and 3 or 2
                     local normalized = normalize_partition_parts(parts, expected_rows)
                     if normalized ~= nil then
+                        stats.successful_splits = stats.successful_splits + 1
+                        stats.pieces_created = stats.pieces_created + #normalized
                         for _, part in ipairs(normalized) do
                             local new_piece = {
                                 simplex = part,
@@ -1425,9 +1528,102 @@ function Geometry.partition_simplices_by_parents(simplices, parents)
         partition_recursive(simplex)
     end
 
-    return result
+    stats.output_pieces = #result
+    return result, stats
 end
 
+
+--- Compute an affine Frenet frame for a regular 3D parametric curve.
+--- Central finite differences approximate the first and second derivatives at
+--- the requested parameter.  The returned Matrix has rows T, N, B, P, where
+--- T, N, and B are direction vectors (homogeneous coordinate 0) and P is the
+--- curve point (homogeneous coordinate 1).  At zero curvature, choose an
+--- arbitrary deterministic normal orthogonal to T so straight portions still
+--- yield a usable affine frame.
+--- @param curve function number -> Vector homogeneous 3D parametric map
+--- @param parameter number parameter value at which to evaluate the frame
+--- @param step number positive finite-difference step
+--- @return Matrix affine Frenet frame with rows T, N, B, P
+function Geometry.frenet(curve, parameter, step)
+    local function finite_number(value)
+        return type(value) == "number"
+            and value == value
+            and value ~= math.huge
+            and value ~= -math.huge
+    end
+
+    local function valid_point(point)
+        if getmetatable(point) ~= Vector or #point ~= 4 then return false end
+        for i = 1, 4 do
+            if not finite_number(point[i]) then return false end
+        end
+        return true
+    end
+
+    local function fallback_frame(point, reason)
+        Recovery.log_once("frenet:" .. tostring(reason), "Frenet frame recovered", reason)
+        local P = valid_point(point) and point:copy() or Vector:new{0, 0, 0, 1}
+        local T = Vector:new{1, 0, 0, 0}
+        local N = Vector:new{0, 1, 0, 0}
+        local B = Vector:new{0, 0, 1, 0}
+        P[4] = 1
+        return Matrix:new{T, N, B, P}
+    end
+
+    if type(curve) ~= "function" then
+        return fallback_frame(nil, "curve was not callable; using a canonical frame")
+    end
+    if not finite_number(parameter) then
+        parameter = 0
+    end
+    if not (finite_number(step) and step > 0) then
+        step = 1e-5
+    end
+
+    local function point_at(t)
+        local ok, p = pcall(curve, t)
+        if ok and valid_point(p) then return p end
+        return nil, ok and "curve returned an invalid point" or p
+    end
+
+    local p0, err0 = point_at(parameter)
+    if not p0 then return fallback_frame(nil, err0) end
+    local pm, errm = point_at(parameter - step)
+    local pp, errp = point_at(parameter + step)
+    if not pm then return fallback_frame(p0, errm) end
+    if not pp then return fallback_frame(p0, errp) end
+
+    local first = pp:_hsub(pm):_hscale(1 / (2 * step))
+    local second = pp:_hsub(p0:_hscale(2)):_hadd(pm):_hscale(1 / (step * step))
+
+    local first_norm = first:hnorm()
+    if not (finite_number(first_norm) and first_norm > 0) then
+        return fallback_frame(p0, "curve tangent vanished or became non-finite")
+    end
+
+    local T = first:hnormalize()
+    local second_norm = second:hnorm()
+    local binormal_raw = first:_hcross(second)
+    local binormal_norm = binormal_raw:hnorm()
+    local curvature_scale = first_norm * second_norm
+    local N, B
+    if finite_number(second_norm)
+        and finite_number(binormal_norm)
+        and curvature_scale > 0
+        and binormal_norm > GEOMETRY_REL_EPS * curvature_scale
+    then
+        B = binormal_raw:hnormalize()
+        N = B:_hcross(T):hnormalize()
+    else
+        N = T:horthogonal_vector():hnormalize()
+        B = T:_hcross(N):hnormalize()
+        N = B:_hcross(T):hnormalize()
+    end
+    local P = p0:copy()
+
+    T[4], N[4], B[4], P[4] = 0, 0, 0, 1
+    return Matrix:new{T, N, B, P}
+end
 
 
 return Geometry

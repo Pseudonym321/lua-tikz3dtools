@@ -4,6 +4,7 @@
 local Vector = {}
 Vector.__index = Vector
 
+local Recovery = require "lua-tikz3dtools-recovery"
 local Matrix
 --- Matrix injection
 --- @param matclass Matrix the class is its own metatable
@@ -216,7 +217,7 @@ end
 
 --- Homogeneous inner vector product of Vector objects, without validation
 --- @param other Vector The RHS
---- @return number The homogeneous inner product of self with other
+--- @return Vector The componentwise homogeneous product of self with other
 function Vector:_hinnervec(other)
     local ls = #self
     local result = {}
@@ -229,7 +230,7 @@ end
 
 --- Homogeneous inner vector product of Vector objects, with validation
 --- @param other Vector The RHS
---- @return number The homogeneous inner product of self with other
+--- @return Vector The componentwise homogeneous product of self with other
 function Vector:hinnervec(other)
     self:binary_verify(other)
     return self:_hinnervec(other)
@@ -284,6 +285,11 @@ function Vector:hnormalize()
     end
     len = math.sqrt(len)
     local V = {}
+    if not (len == len and len > 0 and len < math.huge) then
+        for i = 1, ls - 1 do V[i] = 0 end
+        V[ls] = self[ls]
+        return Vector:_new(V)
+    end
     for i = 1, ls - 1 do
         V[i] = self[i] / len
     end
@@ -301,6 +307,10 @@ function Vector:normalize()
     end
     len = math.sqrt(len)
     local V = {}
+    if not (len == len and len > 0 and len < math.huge) then
+        for i = 1, ls do V[i] = 0 end
+        return Vector:_new(V)
+    end
     for i = 1, ls do
         V[i] = self[i] / len
     end
@@ -353,6 +363,12 @@ end
 --- @return Vector The homogeneous projection of self onto other
 function Vector:_hproject_onto(other)
     local denom = other:_hinner(other)
+    if not (denom == denom and denom > 0 and denom < math.huge) then
+        local out = {}
+        for i = 1, #other - 1 do out[i] = 0 end
+        out[#other] = other[#other] == other[#other] and other[#other] or 1
+        return Vector:_new(out)
+    end
     local scalar = self:_hinner(other) / denom
     return other:_hscale(scalar)
 end
@@ -370,6 +386,11 @@ end
 --- @return Vector The projection of self onto other
 function Vector:_project_onto(other)
     local denom = other:_inner(other)
+    if not (denom == denom and denom > 0 and denom < math.huge) then
+        local out = {}
+        for i = 1, #other do out[i] = 0 end
+        return Vector:_new(out)
+    end
     local scalar = self:_inner(other) / denom
     return other:_scale(scalar)
 end
@@ -443,17 +464,26 @@ end
 --- Find an arbitrary vector orthogonal to self
 --- @return Vector An arbitrary vector orthogonal to self
 function Vector:horthogonal_vector()
-    local v
-    if (
-        math.abs(self[2]) > 0.2
-        and math.abs(self[1]) < 0.2
-        and math.abs(self[3]) < 0.2
-    ) then
-        v = self:_hcross(Vector:_new{0,1,0,1})
-    else
-        v = self:_hcross(Vector:_new{1,0,0,1})
+    local norm = self:hnorm()
+    if not (norm == norm and norm > 0 and norm < math.huge) then
+        return Vector:_new{1, 0, 0, 1}
     end
-    return v
+
+    -- Cross with the least-aligned coordinate axis.  This is scale-independent
+    -- and guarantees a well-conditioned nonzero result for every nonzero
+    -- three-dimensional vector.
+    local ax = math.abs(self[1])
+    local ay = math.abs(self[2])
+    local az = math.abs(self[3])
+    local reference
+    if ax <= ay and ax <= az then
+        reference = Vector:_new{1, 0, 0, 1}
+    elseif ay <= az then
+        reference = Vector:_new{0, 1, 0, 1}
+    else
+        reference = Vector:_new{0, 0, 1, 1}
+    end
+    return self:_hcross(reference)
 end
 
 --- Create a homogeneous sphere point from spherical coordinates
