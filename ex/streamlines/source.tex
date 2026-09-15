@@ -27,7 +27,7 @@
             local emitter_guard=0.31
             local sink_guard=0.31
             local step=0.2
-            local max_steps=200
+            local max_steps=30
             local curves={}
             local n=1
             for i=0,nu-1 do
@@ -94,7 +94,7 @@
         \ltdtappendsurface[
             uparams={
                 local c=objs.curves[\j]
-                return Vector:new{c.fd,1-c.fd,40}
+                return Vector:new{c.fd,1-c.fd,10}
             },
             vparams={return Vector:new{0,tau,6}},
             v={
