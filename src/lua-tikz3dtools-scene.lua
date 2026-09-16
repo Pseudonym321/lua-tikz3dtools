@@ -1092,7 +1092,7 @@ local function uv_curve_point_value(value)
     return nil
 end
 
-local function append_uv_curve_segment(uv_segments, start_point, stop_point, drawoptions)
+local function append_uv_curve_segment(uv_segments, start_point, stop_point, drawoptions, filter)
     if start_point and stop_point
         and start_point:_hdistance(stop_point)
             > point_pair_epsilon(start_point, stop_point)
@@ -1100,11 +1100,12 @@ local function append_uv_curve_segment(uv_segments, start_point, stop_point, dra
         table.insert(uv_segments, {
             simplex = Matrix:_new{start_point, stop_point},
             drawoptions = drawoptions,
+            filter = filter or "return true",
         })
     end
 end
 
-local function append_uv_arrow_segments(uv_segments, tip_point, tail_point, drawoptions, scale)
+local function append_uv_arrow_segments(uv_segments, tip_point, tail_point, drawoptions, scale, filter)
     if not is_nonempty_string(drawoptions) then
         return
     end
@@ -1132,13 +1133,15 @@ local function append_uv_arrow_segments(uv_segments, tip_point, tail_point, draw
         uv_segments,
         base_point:_hadd(V:_hscale(tip_scale)),
         tip_point,
-        drawoptions
+        drawoptions,
+        filter
     )
     append_uv_curve_segment(
         uv_segments,
         base_point:_hsub(V:_hscale(tip_scale)),
         tip_point,
-        drawoptions
+        drawoptions,
+        filter
     )
 end
 
@@ -1166,14 +1169,17 @@ local function explicit_uv_curve_segments(str, label)
                     arrowscale = DEFAULT_UV_ARROW_SCALE
                 end
 
-                append_uv_curve_segment(uv_segments, P, Q, segment.drawoptions)
+                local filter = segment.filter
+                if not is_nonempty_string(filter) then filter = "return true" end
+
+                append_uv_curve_segment(uv_segments, P, Q, segment.drawoptions, filter)
 
                 if is_nonempty_string(segment.arrowtail) then
-                    append_uv_arrow_segments(uv_segments, P, Q, segment.arrowtail, arrowscale)
+                    append_uv_arrow_segments(uv_segments, P, Q, segment.arrowtail, arrowscale, filter)
                 end
 
                 if is_nonempty_string(segment.arrowtip) then
-                    append_uv_arrow_segments(uv_segments, Q, P, segment.arrowtip, arrowscale)
+                    append_uv_arrow_segments(uv_segments, Q, P, segment.arrowtip, arrowscale, filter)
                 end
             end
         end
@@ -1281,25 +1287,32 @@ local function append_supported_surface_segment(segment, surface_patches, patch_
 
                 if start_bary ~= nil and stop_bary ~= nil then
                     local start_point = Geometry.hpoint_from_triangle_barycentric(
-                        primary_patch.simplex,
+                        primary_patch.raw_simplex,
                         start_bary
                     )
                     local stop_point = Geometry.hpoint_from_triangle_barycentric(
-                        primary_patch.simplex,
+                        primary_patch.raw_simplex,
                         stop_bary
                     )
-                    if start_point:_hdistance(stop_point)
-                        > point_pair_epsilon(start_point, stop_point)
-                    then
-                        push_simplex({
-                            simplex = Matrix:_new{start_point, stop_point},
-                            drawoptions = segment.drawoptions or "",
-                            type = "line segment",
-                            filter = "return true",
-                            support_patch_ids = support_patch_ids,
-                            surface_curve = true,
-                            named_partitions = named_partitions,
-                        })
+                    local simplex = project_simplex(
+                        Matrix:_new{start_point, stop_point},
+                        primary_patch.transformation,
+                        "surface curve"
+                    )
+                    if simplex ~= nil then
+                        local A = Vector:_new(simplex[1])
+                        local B = Vector:_new(simplex[2])
+                        if A:_hdistance(B) > point_pair_epsilon(A, B) then
+                            push_simplex({
+                                simplex = simplex,
+                                drawoptions = segment.drawoptions or "",
+                                type = "line segment",
+                                filter = segment.filter or "return true",
+                                support_patch_ids = support_patch_ids,
+                                surface_curve = true,
+                                named_partitions = named_partitions,
+                            })
+                        end
                     end
                 end
             end
@@ -1465,7 +1478,8 @@ local function append_surface(hash)
             return
         end
 
-        local simplex = project_simplex(Matrix:_new(points), transformation)
+        local raw_simplex = Matrix:_new(points)
+        local simplex = project_simplex(raw_simplex, transformation)
         if simplex == nil then
             return
         end
@@ -1488,6 +1502,8 @@ local function append_surface(hash)
                 id = patch_id,
                 uv_triangle = Matrix:_new(uv_points),
                 simplex = simplex,
+                raw_simplex = raw_simplex,
+                transformation = transformation,
             }
         end
     end

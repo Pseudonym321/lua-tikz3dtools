@@ -1,0 +1,57 @@
+\documentclass[tikz,border=8mm]{standalone}
+\usepackage{lua-tikz3dtools} % https://github.com/Pseudonym321/lua-tikz3dtools
+
+\begin{document}
+\foreach \frame in {0,...,19} {
+\pgfmathsetmacro{\phase}{\frame/19}
+\begin{tikzpicture}
+    \useasboundingbox (-4.6,-4.6) rectangle (4.6,4.6);
+
+    \ltdtsetobject[
+        name={return "view"},
+        object={
+            return Matrix.zyzrotation(Vector:new{0,pi/3,pi/2})
+            :multiply(Matrix.translate(Vector:new{0,0,-5,1}))
+            :multiply(Matrix.scale_axis(Vector:new{1,0,0,1},3))
+            :multiply(Matrix.scale_axis(Vector:new{0,1,0,1},3))
+        }
+    ]
+
+    \ltdtsetobject[
+        name={return "R"},
+        object={
+            return function(u,v) 
+                return \phase*((sqrt(105)/(4*sqrt(pi)))*abs(sin(v))*2*abs(cos(v))*abs(cos(2*u))-1) 
+            end
+        }
+    ]
+
+    \ltdtappendsurface[
+        uparams={return Vector:new{0,tau,9}},
+        vparams={return Vector:new{0,pi,5}},
+        adaptive={
+            return {
+                tolerance=0.02,
+                feature_tolerance=0.01,
+                max_depth=8,
+                max_triangles=700
+            }
+        },
+        v={return Vector.sphere(Vector:new{u,v,1}):hscale(R(u,v)+1)},
+        transformation={return view},
+        fill options={
+            return [[
+                fill=red!55!black,
+                fill opacity=.7,
+                draw=blue!70!black,
+                line width=.3pt,
+                line join=round,
+                line cap=round
+            ]]
+        }
+    ]
+
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+}
+\end{document}
