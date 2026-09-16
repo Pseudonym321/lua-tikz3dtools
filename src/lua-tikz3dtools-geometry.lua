@@ -380,9 +380,10 @@ function Geometry.hpoint_triangle_occlusion_sort(self, T)
     local Tb = Vector:_new(T[2])
     local Tc = Vector:_new(T[3])
 
-    if Geometry.hpoint_point_intersecting(self, Ta) then return nil end
-    if Geometry.hpoint_point_intersecting(self, Tb) then return nil end
-    if Geometry.hpoint_point_intersecting(self, Tc) then return nil end
+    local vertex_eps = point_epsilon(GEOMETRY_REL_EPS, self, Ta, Tb, Tc)
+    if self:_hdistance(Ta) <= vertex_eps then return nil end
+    if self:_hdistance(Tb) <= vertex_eps then return nil end
+    if self:_hdistance(Tc) <= vertex_eps then return nil end
     local eps = 1e-12
     if Geometry.hpoint_in_triangular_prism(P1, TP) then
         local vu = Tb:_hsub(Ta)

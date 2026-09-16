@@ -1,0 +1,175 @@
+\documentclass[tikz,border=8mm]{standalone}
+\usepackage{lua-tikz3dtools} % https://github.com/Pseudonym321/lua-tikz3dtools
+
+\begin{document}
+\begin{tikzpicture}
+
+    \ltdtsetobject[
+        name={return "geom"},
+        object={
+            local rs=pi/6
+            local re=pi/3
+            local ex=Vector:new{1,0,0,1}
+            local ey=Vector:new{0,1,0,1}
+            local scale=Matrix.scale_axis(ex,2):multiply(Matrix.scale_axis(ey,2))
+            local view=Matrix.zyzrotation(Vector:new{6.5*pi/6,pi/4.5,pi/2})
+                :multiply(Matrix.translate(Vector:new{0,0,-5,1}))
+                :multiply(Matrix.perspective(Vector:new{0,0,-1/6,1}))
+                :multiply(scale)
+            return {
+                rs=rs,
+                re=re,
+                view=view,
+                er=Vector:new{cos(rs),sin(rs),0,1},
+                et=Vector:new{cos(rs-pi/2),sin(rs-pi/2),0,1},
+                anchor=Vector:new{1.5*cos(rs),1.5*sin(rs),2.65,1}:hadd(Vector:new{cos(rs-pi/2),sin(rs-pi/2),0,1}:hscale(0.035)),
+                ez=Vector:new{0,0,1,1}
+            }
+        }
+    ]
+
+    \ltdtappendlight[
+        v={return Vector:new{-2,-3,5,1}}
+    ]
+
+    \ltdtappendsolid[
+        uparams={return Vector:new{geom.rs,geom.re,6}},
+        vparams={return Vector:new{2.3,3,4}},
+        wparams={return Vector:new{1,2,5}},
+        v={return Vector:new{w*cos(u),w*sin(u),v,1}},
+        transformation={return geom.view},
+        fill options={
+            local p=floor(48+42*lighting)
+            return "fill=red!"..p.."!black,fill opacity=.90,draw=black!28,line width=.10pt,line join=round,line cap=round"
+        }
+    ]
+
+    \ltdtappendsurface[
+        uparams={return Vector:new{geom.rs,geom.re,10}},
+        vparams={return Vector:new{1,2,7}},
+        v={return Vector:new{v*cos(u),v*sin(u),0,1}},
+        transformation={return geom.view},
+        fill options={return "fill=black!18,fill opacity=.10,draw=none"}
+    ]
+
+    \foreach \r in {1,2} {
+        \ltdtappendcurve[
+            uparams={return Vector:new{geom.rs,geom.re,24}},
+            v={return Vector:new{\r*cos(u),\r*sin(u),0,1}},
+            transformation={return geom.view},
+            draw options={return "draw=black!38,line width=.30pt,line cap=round"}
+        ]
+    }
+    \foreach \a in {geom.rs,geom.re} {
+        \ltdtappendcurve[
+            uparams={return Vector:new{1,2,2}},
+            v={return Vector:new{u*cos(\a),u*sin(\a),0,1}},
+            transformation={return geom.view},
+            draw options={return "draw=black!38,line width=.30pt,line cap=round"}
+        ]
+    }
+
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,4,2}},
+        v={return Vector:new{u/2,0,0,1}},
+        transformation={return geom.view},
+        draw options={return "draw=black!78,line width=.52pt,line cap=round"},
+        arrow tip={return {length=.18,radius=.055,facets=7,options="fill=black!78,draw=none"}}
+    ]
+    \ltdtappendlabel[
+        v={return Vector:new{4.28/2,0,0,1}},
+        transformation={return geom.view},
+        text={\(x\)}
+    ]
+
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,4,2}},
+        v={return Vector:new{0,u,0,1}},
+        transformation={return geom.view},
+        draw options={return "draw=black!78,line width=.52pt,line cap=round"},
+        arrow tip={return {length=.18,radius=.055,facets=7,options="fill=black!78,draw=none"}}
+    ]
+    \ltdtappendlabel[
+        v={return Vector:new{0,4.28,0,1}},
+        transformation={return geom.view},
+        text={\(y\)}
+    ]
+
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,4,2}},
+        v={return Vector:new{0,0,u,1}},
+        transformation={return geom.view},
+        draw options={return "draw=black!78,line width=.52pt,line cap=round"},
+        arrow tip={return {length=.18,radius=.055,facets=7,options="fill=black!78,draw=none"}}
+    ]
+    \ltdtappendlabel[
+        v={return Vector:new{0,0,4.28,1}},
+        transformation={return geom.view},
+        text={\(z\)}
+    ]
+
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,1,2}},
+        v={return Vector:new{u*cos(geom.rs),u*sin(geom.rs),2.3*u,1}},
+        transformation={return geom.view},
+        draw options={return "draw=blue!72!black,line width=.72pt,line cap=round"},
+        arrow tip={return {length=.17,radius=.05,facets=7,options="fill=blue!72!black,draw=none"}}
+    ]
+
+    \foreach \h in {0,2.3,3} {
+        \ltdtappendcurve[
+            uparams={return Vector:new{0,1,2}},
+            v={return Vector:new{u*cos(geom.rs),u*sin(geom.rs),\h,1}},
+            transformation={return geom.view},
+            draw options={return "draw=black!42,line width=.30pt,line cap=round"}
+        ]
+        \ltdtappendcurve[
+            uparams={return Vector:new{0,1,2}},
+            v={return Vector:new{u*cos(geom.re),u*sin(geom.re),\h,1}},
+            transformation={return geom.view},
+            draw options={return "draw=black!42,line width=.30pt,line cap=round"}
+        ]
+    }
+
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,1,2}},
+        v={return geom.anchor:hadd(geom.er:hscale(u))},
+        transformation={return geom.view},
+        draw options={return "draw=teal!65!black,line width=.62pt,line cap=round"},
+        arrow tip={return {length=.15,radius=.047,facets=7,options="fill=teal!65!black,draw=none"}}
+    ]
+    \ltdtappendlabel[
+        v={return geom.anchor:hadd(geom.er:hscale(1.28))},
+        transformation={return geom.view},
+        text={\(\xi\)}
+    ]
+
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,1,2}},
+        v={return geom.anchor:hadd(geom.et:hscale(u))},
+        transformation={return geom.view},
+        draw options={return "draw=teal!65!black,line width=.62pt,line cap=round"},
+        arrow tip={return {length=.15,radius=.047,facets=7,options="fill=teal!65!black,draw=none"}}
+    ]
+    \ltdtappendlabel[
+        v={return geom.anchor:hadd(geom.et:hscale(1.28))},
+        transformation={return geom.view},
+        text={\(\eta\)}
+    ]
+
+    \ltdtappendcurve[
+        uparams={return Vector:new{0,1,2}},
+        v={return geom.anchor:hadd(geom.ez:hscale(u))},
+        transformation={return geom.view},
+        draw options={return "draw=teal!65!black,line width=.62pt,line cap=round"},
+        arrow tip={return {length=.15,radius=.047,facets=7,options="fill=teal!65!black,draw=none"}}
+    ]
+    \ltdtappendlabel[
+        v={return geom.anchor:hadd(geom.ez:hscale(1.28))},
+        transformation={return geom.view},
+        text={\(\zeta\)}
+    ]
+
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\end{document}

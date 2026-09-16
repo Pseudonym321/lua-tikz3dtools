@@ -1,0 +1,52 @@
+\documentclass[tikz,border=8mm]{standalone}
+\usepackage{lua-tikz3dtools}
+
+\begin{document}
+\foreach \frame in {0,...,39} {
+\begin{tikzpicture}[scale=2]
+\useasboundingbox (-3.35,-2.15) rectangle (3.35,2.15);
+\pgfmathsetmacro{\phase}{\frame/40*2*pi}
+\ltdtappendlight[v={return Vector:new{1,1,1,1}}]
+\ltdtsetobject[
+    name={return "view"},
+    object={return Matrix.axis_angle(Vector:new{0,0,1,1},\phase):multiply(Matrix.zyzrotation(Vector:new{2*pi/3,pi/3,pi/2})):multiply(Matrix.perspective(Vector:new{0,0,-1/30})):multiply(Matrix.scale_axis(Vector:new{1,0,0,1},0.35)):multiply(Matrix.scale_axis(Vector:new{0,1,0,1},0.35))}
+]
+\ltdtappendsurface[
+    name=villarceaucut,
+    uparams={return Vector:new{-1,1,8}},
+    vparams={return Vector:new{-1,1,8}},
+    v={return Vector:new{u,v,u/sqrt(15),1}:hscale(12):hadd(Vector:new{0,0,2,1})},
+    transformation={return view},
+    filter={return false}
+]
+\ltdtappendsurface[
+    uparams={return Vector:new{0,1,27}},
+    vparams={return Vector:new{0,1,21}},
+    v={return Vector.sphere(Vector:new{u*tau,v*tau,2}):hadd(Vector:new{8*cos(u*tau),8*sin(u*tau),2,1})},
+    fill options={
+        local shade=floor(100*lighting+0.5)
+        return "fill=white!"..tostring(shade).."!black!50!teal"
+    },
+    transformation={return view},
+    partition by={return {{surface="villarceaucut",keep="both",intersection_options="draw=red!80!black,line width=.9pt"}}},
+    filter={
+        local p=A:hadd(B):hadd(C):hscale(1/3):multiply(view:inverse())
+        return p[3]<p[1]/sqrt(15)+2
+    }
+]
+\ltdtappendsurface[
+    uparams={return Vector:new{0,1,27}},
+    vparams={return Vector:new{0,1,21}},
+    v={return Vector.sphere(Vector:new{u*tau,v*tau,2}):hadd(Vector:new{8*cos(u*tau),8*sin(u*tau),2,1})},
+    fill options={return "postaction={draw,line join=round}"},
+    transformation={return view},
+    partition by={return {{surface="villarceaucut",keep="both"}}},
+    filter={
+        local p=A:hadd(B):hadd(C):hscale(1/3):multiply(view:inverse())
+        return p[3]>p[1]/sqrt(15)+2
+    }
+]
+\ltdtdisplaysimplices
+\end{tikzpicture}
+}
+\end{document}
