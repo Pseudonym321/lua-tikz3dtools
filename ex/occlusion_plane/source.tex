@@ -1,203 +1,218 @@
-% Source - https://tex.stackexchange.com/a/764645
-% Posted by Jasper
-% Retrieved 2026-09-16, License - CC BY-SA 4.0
-
 \documentclass[tikz,border=6mm]{standalone}
 \usepackage{lua-tikz3dtools}
 
-\def\VIEWA{1.10*pi}
-\def\VIEWB{.36*pi}
-
 \begin{document}
 \foreach \frame in {5,...,33} {
-    \pgfmathsetmacro{\ANIMT}{\frame/39}
-    \begin{tikzpicture}
-        \useasboundingbox (-3.15,-2.35) rectangle (3.15,2.45);
+    \pgfmathsetmacro{\PARAM}{-1+2*\frame/39}
+    \begin{tikzpicture}[scale=2]
+        \useasboundingbox[scale=0.5] (-3.15,-2.35) rectangle (3.15,2.45);
+        
+        % This is a table of Lua objects that we can use in our namespaced keys.
         \ltdtsetobject[
-            name={return "scene"},
+            name={return "objs"},
             object={
-                local t=\ANIMT
-                local xmin,xmax=1,3
-                local ymin,ymax=.5,2.5
-                local zmin,zmax=.5,2.5
-                local x0=xmin+t*(xmax-xmin)
-                local y0=ymin+t*(ymax-ymin)
-                local scale=1.58
-                local center=Vector:new{2,1.5,1.5,1}
+                local view = Matrix.zyzrotation(
+                    Vector:new{1.10*pi,.36*pi,pi/2}
+                )
+                :multiply(
+                    Matrix.perspective(
+                        Vector:new{0,0,-1/18,1}
+                    )
+                )
+                local inv=view:inverse()
                 local function f(x,y)
-                    return -(x-2)^3-(y-1.5)^2+2
+                    return -x^3-y^2+.5
                 end
-                local function localize(p)
-                    return p:hsub(center):hscale(scale)
+                local function fy(x,y)
+                    return -2*y
                 end
-                local function unlocalize(p)
-                    return p:hscale(1/scale):hadd(center)
-                end
-                local function graph(x,y)
-                    return localize(Vector:new{x,y,f(x,y),1})
-                end
-                local slope=-2*(y0-1.5)
-                local function tangentz(y)
-                    return f(x0,y0)+slope*(y-y0)
-                end
+                % This is a predicate which tells me whether a point is inside a unit cube.
                 local function inside(p)
-                    local q=unlocalize(p)
-                    local e=1e-7
-                    return q[1]>=xmin-e and q[1]<=xmax+e
-                        and q[2]>=ymin-e and q[2]<=ymax+e
-                        and q[3]>=zmin-e and q[3]<=zmax+e
+                    p=p:multiply(inv)
+                    return abs(p[1])<=1.000001 and
+                        abs(p[2])<=1.000001 and
+                        abs(p[3])<=1.000001
                 end
-                local function edge(a,b)
-                    return {
-                        localize(Vector:new{a[1],a[2],a[3],1}),
-                        localize(Vector:new{b[1],b[2],b[3],1})
-                    }
+                % Average of triangle
+                local function triangle(A,B,C)
+                    return inside(
+                        A:hadd(B):hadd(C):hscale(1/3)
+                    )
                 end
-                local edges={
-                    edge({xmin,ymin,zmin},{xmax,ymin,zmin}),
-                    edge({xmax,ymin,zmin},{xmax,ymax,zmin}),
-                    edge({xmax,ymax,zmin},{xmin,ymax,zmin}),
-                    edge({xmin,ymax,zmin},{xmin,ymin,zmin}),
-                    edge({xmin,ymin,zmax},{xmax,ymin,zmax}),
-                    edge({xmax,ymin,zmax},{xmax,ymax,zmax}),
-                    edge({xmax,ymax,zmax},{xmin,ymax,zmax}),
-                    edge({xmin,ymax,zmax},{xmin,ymin,zmax}),
-                    edge({xmin,ymin,zmin},{xmin,ymin,zmax}),
-                    edge({xmax,ymin,zmin},{xmax,ymin,zmax}),
-                    edge({xmax,ymax,zmin},{xmax,ymax,zmax}),
-                    edge({xmin,ymax,zmin},{xmin,ymax,zmax})
-                }
-                local view=Matrix.zyzrotation(Vector:new{\VIEWA,\VIEWB,pi/2})
-                    :multiply(Matrix.perspective(Vector:new{0,0,-1/18,1}))
-                local p=localize(Vector:new{x0,y0,f(x0,y0),1})
+                % Average of line segment
+                local function segment(A,B)
+                    return inside(A:hadd(B):hscale(1/2))
+                end
+                % This helps iterate axis dimensions
+                local function edge(axis,u,a,b)
+                    if axis==1 then
+                        return Vector:new{u,a,b,1}
+                    elseif axis==2 then
+                        return Vector:new{a,u,b,1}
+                    end
+                    return Vector:new{a,b,u,1}
+                end
                 return {
-                    xmin=xmin,
-                    xmax=xmax,
-                    ymin=ymin,
-                    ymax=ymax,
-                    zmin=zmin,
-                    zmax=zmax,
-                    x0=x0,
-                    y0=y0,
-                    f=f,
-                    tangentz=tangentz,
-                    localize=localize,
-                    graph=graph,
-                    inside=inside,
-                    edges=edges,
                     view=view,
-                    inv=view:inverse(),
-                    p=p
+                    graph={
+                        f=f,
+                        fy=fy
+                    },
+                    cube={
+                        min=-1,
+                        max=1,
+                        triangle=triangle,
+                        segment=segment,
+                        edge=edge,
+                        curve_filter=[[
+                            return objs.cube.segment(A,B)
+                        ]]
+                    },
+                    % I thought this part was really cool.
+                    % We can save our styles as Lua Strings to be able to program with TikZ keys more nicely.
+                    % I don't show an example here, but this means we could basically compute unique keys per simplex.
+                    styles={
+                        plane=[[
+                            fill=cyan!7!white,
+                            fill opacity=.40,
+                            draw=none
+                        ]],
+                        grid=[[
+                            draw=blue!32!gray,
+                            line width=.11pt,
+                            line cap=round
+                        ]],
+                        tangent=[[
+                            draw=black!90,
+                            line width=.52pt,
+                            line cap=round
+                        ]],
+                        graph=[[
+                            fill=red!70!orange!88!white,
+                            draw=red!48!black,
+                            line width=.065pt,
+                            line join=round
+                        ]],
+                        section=[[
+                            draw=green!42!black,
+                            line width=.46pt,
+                            line cap=round
+                        ]],
+                        point=[[
+                            fill=yellow!84!orange,
+                            draw=orange!60!black,
+                            line width=.05pt
+                        ]],
+                        cube=[[
+                            draw=black!28,
+                            line width=.20pt,
+                            line cap=round
+                        ]]
+                    }
                 }
             }
         ]
         \ltdtappendsolid[
-            uparams={return Vector:new{scene.xmin,scene.xmax,2}},
-            vparams={return Vector:new{scene.ymin,scene.ymax,2}},
-            wparams={return Vector:new{scene.zmin,scene.zmax,2}},
-            v={return scene.localize(Vector:new{u,v,w,1})},
-            transformation={return scene.view},
+            uparams={return Vector:new{objs.cube.min,objs.cube.max,2}},
+            vparams={return Vector:new{objs.cube.min,objs.cube.max,2}},
+            wparams={return Vector:new{objs.cube.min,objs.cube.max,2}},
+            v={return Vector:new{u,v,w,1}},
+            transformation={return objs.view},
             filter={return false}
         ]
         \ltdtappendsurface[
-            name=slice,
-            uparams={return Vector:new{scene.zmin-.4,scene.zmax+.4,2}},
-            vparams={return Vector:new{scene.ymin-.4,scene.ymax+.4,2}},
-            v={return scene.localize(Vector:new{scene.x0,v,u,1})},
-            transformation={return scene.view},
-            fill options={return "fill=cyan!7!white,fill opacity=.40,draw=none"},
-            filter={
-                local p=A:hadd(B):hadd(C):hscale(1/3):multiply(scene.inv)
-                return scene.inside(p)
-            },
+            uparams={return Vector:new{-1.4,1.4,2}},
+            vparams={return Vector:new{-1.4,1.4,2}},
+            v={return Vector:new{\PARAM,v,u,1}},
+            transformation={return objs.view},
+            fill options={return objs.styles.plane},
+            filter={return objs.cube.triangle(A,B,C)},
+            % This is a lot of hard to read code so please read my next comment first,
+            % as it explains how it works. (see down below)
             curve={
-                local F="local p=A:hadd(B):hscale(1/2):multiply(scene.inv) return scene.inside(p)"
-                local G="draw=blue!32!gray,line width=.11pt,line cap=round"
-                return {
-                    {
-                        start=Vector:new{scene.zmin-.4,1},
-                        stop=Vector:new{scene.zmax+.4,1},
-                        drawoptions=G,
-                        filter=F
+                local curves={}
+                for _,q in ipairs({-.5,0,.5}) do
+                    table.insert(curves,{
+                        start=Vector:new{-1.4,q,1},
+                        stop=Vector:new{1.4,q,1},
+                        drawoptions=objs.styles.grid,
+                        filter=objs.cube.curve_filter
+                    })
+                    table.insert(curves,{
+                        start=Vector:new{q,-1.4,1},
+                        stop=Vector:new{q,1.4,1},
+                        drawoptions=objs.styles.grid,
+                        filter=objs.cube.curve_filter
+                    })
+                end
+                local y=\PARAM
+                local z=objs.graph.f(\PARAM,y)
+                local slope=objs.graph.fy(\PARAM,y)
+                % See this comment. The way this key works is you return a lua table
+                % of lua tables with certain fields filled. There are exactly 4 fields, as below.
+                table.insert(curves,{
+                    start=Vector:new{
+                        z+slope*(-1.5-y),-1.5,1
                     },
-                    {
-                        start=Vector:new{scene.zmin-.4,1.5},
-                        stop=Vector:new{scene.zmax+.4,1.5},
-                        drawoptions=G,
-                        filter=F
+                    stop=Vector:new{
+                        z+slope*(1.5-y),1.5,1
                     },
-                    {
-                        start=Vector:new{scene.zmin-.4,2},
-                        stop=Vector:new{scene.zmax+.4,2},
-                        drawoptions=G,
-                        filter=F
-                    },
-                    {
-                        start=Vector:new{1,scene.ymin-.4},
-                        stop=Vector:new{1,scene.ymax+.4},
-                        drawoptions=G,
-                        filter=F
-                    },
-                    {
-                        start=Vector:new{1.5,scene.ymin-.4},
-                        stop=Vector:new{1.5,scene.ymax+.4},
-                        drawoptions=G,
-                        filter=F
-                    },
-                    {
-                        start=Vector:new{2,scene.ymin-.4},
-                        stop=Vector:new{2,scene.ymax+.4},
-                        drawoptions=G,
-                        filter=F
-                    },
-                    {
-                        start=Vector:new{scene.tangentz(scene.ymin-.5),scene.ymin-.5},
-                        stop=Vector:new{scene.tangentz(scene.ymax+.5),scene.ymax+.5},
-                        drawoptions="draw=black!90,line width=.52pt,line cap=round",
-                        filter=F
-                    }
-                }
+                    drawoptions=objs.styles.tangent,
+                    filter=objs.cube.curve_filter
+                })
+                return curves
             }
         ]
         \ltdtappendsurface[
-            uparams={return Vector:new{.65,3.35,7}},
-            vparams={return Vector:new{.15,2.85,7}},
-            adaptive={return {tolerance=.005,feature_tolerance=.002,max_depth=9,max_triangles=700}},
-            v={return scene.graph(u,v)},
-            transformation={return scene.view},
-            fill options={return "fill=red!70!orange!88!white,draw=red!48!black,line width=.065pt,line join=round"},
-            partition by={return {{surface="slice",keep="both"}}},
-            filter={
-                local p=A:hadd(B):hadd(C):hscale(1/3):multiply(scene.inv)
-                return scene.inside(p)
+            uparams={return Vector:new{-1.35,1.35,7}},
+            vparams={return Vector:new{-1.35,1.35,7}},
+            adaptive={
+                return {
+                    tolerance=.005,
+                    feature_tolerance=.002,
+                    max_depth=9,
+                    max_triangles=700
+                }
             },
+            v={return Vector:new{u,v,objs.graph.f(u,v),1}},
+            transformation={return objs.view},
+            fill options={return objs.styles.graph},
+            filter={return objs.cube.triangle(A,B,C)},
             curve={
-                local F="local p=A:hadd(B):hscale(1/2):multiply(scene.inv) return scene.inside(p)"
                 return {{
-                    start=Vector:new{scene.x0,.15},
-                    stop=Vector:new{scene.x0,2.85},
-                    drawoptions="draw=green!42!black,line width=.46pt,line cap=round",
-                    filter=F
+                    start=Vector:new{\PARAM,-1.35,1},
+                    stop=Vector:new{\PARAM,1.35,1},
+                    drawoptions=objs.styles.section,
+                    filter=objs.cube.curve_filter
                 }}
             }
         ]
         \ltdtappendsurface[
             uparams={return Vector:new{0,tau,10}},
             vparams={return Vector:new{0,pi,6}},
-            v={return scene.p:hadd(Vector.sphere(Vector:new{u,v,.05}))},
-            transformation={return scene.view},
-            fill options={return "fill=yellow!84!orange,draw=orange!60!black,line width=.05pt"}
+            v={
+                local a=\PARAM
+                local p=Vector:new{
+                    a,a,objs.graph.f(a,a),1
+                }
+                return p:hadd(
+                    Vector.sphere(Vector:new{u,v,.05})
+                )
+            },
+            transformation={return objs.view},
+            fill options={return objs.styles.point}
         ]
-        \foreach \i in {1,...,12} {
-            \ltdtappendcurve[
-                uparams={return Vector:new{0,1,2}},
-                v={
-                    local e=scene.edges[\i]
-                    return e[1]:hscale(1-u):hadd(e[2]:hscale(u))
-                },
-                transformation={return scene.view},
-                draw options={return "draw=black!28,line width=.20pt,line cap=round"}
-            ]
+        \foreach \a in {-1,1} {
+            \foreach \b in {-1,1} {
+                \foreach \axis in {1,2,3} {
+                    \ltdtappendcurve[
+                        uparams={return Vector:new{-1,1,2}},
+                        v={return objs.cube.edge(\axis,u,\a,\b)},
+                        transformation={return objs.view},
+                        draw options={return objs.styles.cube}
+                    ]
+                }
+            }
         }
         \ltdtdisplaysimplices
     \end{tikzpicture}

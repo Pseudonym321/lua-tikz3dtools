@@ -1,50 +1,82 @@
 \documentclass[tikz,border=6pt]{standalone}
 \usepackage{lua-tikz3dtools}
+
 \begin{document}
-\begin{tikzpicture}
-    \useasboundingbox (-5.5,-4.5) rectangle (5.5,4.5);
-    \ltdtsetobject[
-        name={return "objs"},
-        object={
-            local nan=0/0
-            local function point(x,y)
-                local q=x*x/2+y*y-1
-                if q<=0 then return Vector:new{nan,nan,nan,1} end
-                local f=sqrt(q)
-                local g=f/abs(f)
-                local h=1/((((x-10)+(y-3)^2)^2)+1)
-                local z=g+h+1/(x*x+(y+10)^2-1)
-                if z~=z or z>12 or z< -12 then return Vector:new{nan,nan,nan,1} end
-                return Vector:new{0.27*x,0.27*y,0.30*z,1}
-            end
-            return {
-                point=point,
-                view=Matrix.zyzrotation(Vector:new{1.08*pi,0.36*pi,0.72*pi})
+\foreach \frame in {0,...,39} {
+    \pgfmathsetmacro{\phase}{\frame/39*2*pi}
+    \begin{tikzpicture}
+        \useasboundingbox (-5.5,-4.5) rectangle (5.5,4.5);
+        \ltdtsetobject[
+            name={return "objs"},
+            object={
+                local nan=0/0
+                local phase=\phase
+                local function orbit(cx,cy,r,offset)
+                    local a=phase+offset
+                    return cx+r*cos(a),cy+r*sin(a)
+                end
+                local hx,hy=orbit(-3,2,2.5,0)
+                local rx,ry=orbit(6,2,2,2*pi/3)
+                local px,py=orbit(-3,-5,2.5,4*pi/3)
+                local function point(x,y)
+                    local dx=x-hx
+                    local dy=y-hy
+                    local q=dx*dx/2+dy*dy-1
+                    if q<=0 then
+                        return Vector:new{nan,nan,nan,1}
+                    end
+                    local ridge=(x-rx)+(y-ry)^2
+                    local bump=1/(ridge*ridge+1)
+                    local sx=x-px
+                    local sy=y-py
+                    local pole=sx*sx+sy*sy-1
+                    local z=1+bump+1/pole
+                    if z~=z or z>12 or z< -12 then
+                        return Vector:new{nan,nan,nan,1}
+                    end
+                    return Vector:new{.24*x,.24*y,.30*z,1}
+                end
+                return {
+                    point=point,
+                    view=Matrix.zyzrotation(
+                        Vector:new{1.08*pi,.36*pi,.72*pi}
+                    )
+                }
             }
-        }
-    ]
-    \ltdtappendlight[
-        v={return Vector:new{1,-1,2,1}}
-    ]
-    \ltdtappendsurface[
-        uparams={return Vector:new{-12,12,17}},
-        vparams={return Vector:new{-12,12,17}},
-        adaptive={
-            return {
-                tolerance=0.0001,
-                feature_tolerance=0.001,
-                max_depth=3,
-                max_triangles=1400
+        ]
+        \ltdtappendlight[
+            v={return Vector:new{1,-1,2,1}}
+        ]
+        \ltdtappendsurface[
+            uparams={return Vector:new{-14,14,19}},
+            vparams={return Vector:new{-14,14,19}},
+            adaptive={
+                return {
+                    tolerance=.001,
+                    feature_tolerance=.001,
+                    max_depth=3,
+                    max_triangles=500
+                }
+            },
+            v={return objs.point(u,v)},
+            transformation={return objs.view},
+            fill options={
+                return function(lighting)
+                    local shade=floor(45+50*lighting)
+                    local options=[[
+                        fill=red!SHADE!black,
+                        draw=red!22!black,
+                        line width=.05pt,
+                        line join=round
+                    ]]
+                    options=options:gsub(
+                        "SHADE", tostring(shade)
+                    )
+                    return options
+                end
             }
-        },
-        v={return objs.point(u,v)},
-        transformation={return objs.view},
-        fill options={
-            return function(lighting)
-                return "fill=red!"..tostring(floor(45+50*lighting)).."!black,draw=red!22!black,line width=0.05pt"
-            end
-        }
-    ]
-    \ltdtdisplaysimplices
-\end{tikzpicture}
+        ]
+        \ltdtdisplaysimplices
+    \end{tikzpicture}
+}
 \end{document}
