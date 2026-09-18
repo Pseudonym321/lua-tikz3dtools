@@ -2,7 +2,7 @@
 \usepackage{lua-tikz3dtools}
 
 \begin{document}
-\foreach \frame in {0,...,39} {
+\foreach \frame in {0} {
     \pgfmathsetmacro{\phase}{\frame/39*2*pi}
     \begin{tikzpicture}
         \useasboundingbox (-5.5,-4.5) rectangle (5.5,4.5);
@@ -52,10 +52,10 @@
             vparams={return Vector:new{-14,14,19}},
             adaptive={
                 return {
-                    tolerance=.001,
-                    feature_tolerance=.001,
-                    max_depth=3,
-                    max_triangles=500
+                    tolerance=.0005,
+                    feature_tolerance=.0005,
+                    max_depth=5,
+                    max_triangles=4000
                 }
             },
             v={return objs.point(u,v)},
@@ -64,8 +64,8 @@
                 return function(lighting)
                     local shade=floor(45+50*lighting)
                     local options=[[
-                        fill=red!SHADE!black,
-                        draw=red!22!black,
+                        fill=white!SHADE!black,
+                        draw=none,
                         line width=.05pt,
                         line join=round
                     ]]

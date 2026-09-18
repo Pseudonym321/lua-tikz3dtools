@@ -690,10 +690,21 @@ local function resolve_partition_specs(source, owner_type)
             intersection_options = nil
         end
 
+        local filter = item.filter
+        if filter ~= nil and not is_nonempty_string(filter) then
+            Recovery.log_once(
+                "partition-intersection-filter-invalid",
+                "partition intersection filter ignored",
+                "one or more entries did not provide a Lua filter body"
+            )
+            filter = nil
+        end
+
         specs[#specs + 1] = {
             surface = surface,
             keep = normalize_partition_side(item.keep),
             intersection_options = intersection_options or "",
+            filter = filter or "return true",
         }
         ::continue_partition_item::
     end
@@ -789,7 +800,7 @@ local function intersection_highlight(record, surface_record, spec, intersection
         simplex = intersection,
         drawoptions = spec.intersection_options,
         type = "line segment",
-        filter = "return true",
+        filter = spec.filter or "return true",
         support_patch_ids = support_ids,
         intersection_curve = true,
     }
@@ -924,6 +935,7 @@ local function deduplicate_highlights(highlights)
                 seen_rep[rep] = true
                 local existing = highlights[rep]
                 if existing.drawoptions == candidate.drawoptions
+                    and existing.filter == candidate.filter
                     and same_segment(existing, candidate)
                 then
                     matched_rep = rep
