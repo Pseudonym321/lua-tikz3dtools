@@ -1,5 +1,5 @@
 \NeedsTeXFormat{LaTeX2e}[1994/05/21]
-\ProvidesExplPackage{lua-tikz3dtools}{2026/09/14}{v3.5.1}{
+\ProvidesExplPackage{lua-tikz3dtools}{2026/09/19}{v3.6.3}{
     LuaLaTeX package for 3D illustrations in TikZ.
 }
 
@@ -22,6 +22,7 @@
                 ,filter/.code = {\protected@edef\luatikztdtools@p@l@filter{#1}}
                 ,filter/.initial = return~true
             ,/lua-tikz3dtools/parametric/curve/.cd % abbreviated "c"
+                ,name/.code = {\protected@edef\luatikztdtools@p@c@name{#1}}
                 ,uparams/.code = {\protected@edef\luatikztdtools@p@c@uparams{#1}}
                 ,uparams/.initial = return~Vector:new{0,1,10}
                 ,v/.code = {\protected@edef\luatikztdtools@p@c@v{#1}}
@@ -38,6 +39,7 @@
                 ,filter/.code = {\protected@edef\luatikztdtools@p@c@filter{#1}}
                 ,filter/.initial = return~true
                 ,partition~by/.code = {\protected@edef\luatikztdtools@p@c@partitionby{#1}}
+                ,exclude~partition~by/.code = {\protected@edef\luatikztdtools@p@c@excludepartitionby{#1}}
                 ,adaptive/.code = {\protected@edef\luatikztdtools@p@c@adaptive{#1}}
                 ,adaptive/.default = {return~{}}
                 ,adaptive/.initial =
@@ -56,10 +58,14 @@
                 ,curve/.code = {\protected@edef\luatikztdtools@p@s@curve{#1}}
                 ,name/.code = {\protected@edef\luatikztdtools@p@s@name{#1}}
                 ,partition~by/.code = {\protected@edef\luatikztdtools@p@s@partitionby{#1}}
+                ,exclude~partition~by/.code = {\protected@edef\luatikztdtools@p@s@excludepartitionby{#1}}
+                ,intersection~curves/.code = {\protected@edef\luatikztdtools@p@s@intersectioncurves{#1}}
+                ,intersection~surfaces/.code = {\protected@edef\luatikztdtools@p@s@intersectionsurfaces{#1}}
                 ,adaptive/.code = {\protected@edef\luatikztdtools@p@s@adaptive{#1}}
                 ,adaptive/.default = {return~{}}
                 ,adaptive/.initial =
             ,/lua-tikz3dtools/parametric/triangle/.cd % abbreviated "t"
+                ,name/.code = {\protected@edef\luatikztdtools@p@t@name{#1}}
                 ,m/.code = {\protected@edef\luatikztdtools@p@t@m{#1}}
                 ,transformation/.code = {\protected@edef\luatikztdtools@p@t@transformation{#1}}
                 ,transformation/.initial = return~Matrix.identity()
@@ -67,7 +73,10 @@
                 ,fill~options/.initial = return~""
                 ,filter/.code = {\protected@edef\luatikztdtools@p@t@filter{#1}}
                 ,filter/.initial = return~true
+                ,partition~by/.code = {\protected@edef\luatikztdtools@p@t@partitionby{#1}}
+                ,exclude~partition~by/.code = {\protected@edef\luatikztdtools@p@t@excludepartitionby{#1}}
             ,/lua-tikz3dtools/parametric/solid/.cd % abbreviated "solid"
+                ,name/.code = {\protected@edef\luatikztdtools@p@solid@name{#1}}
                 ,uparams/.code = {\protected@edef\luatikztdtools@p@solid@uparams{#1}}
                 ,uparams/.initial = return~Vector:new{0,1,10}
                 ,vparams/.code = {\protected@edef\luatikztdtools@p@solid@vparams{#1}}
@@ -82,6 +91,7 @@
                 ,filter/.code = {\protected@edef\luatikztdtools@p@solid@filter{#1}}
                 ,filter/.initial = return~true
                 ,partition~by/.code = {\protected@edef\luatikztdtools@p@solid@partitionby{#1}}
+                ,exclude~partition~by/.code = {\protected@edef\luatikztdtools@p@solid@excludepartitionby{#1}}
 }% end tikzset
 
 \lua_load_module:n { lua-tikz3dtools-main }

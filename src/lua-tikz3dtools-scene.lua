@@ -638,15 +638,206 @@ local function register_named_surface(name)
     return surface
 end
 
-local function resolve_partition_specs(source, owner_type)
-    if not is_nonempty_string(source) then return nil end
+local function resolve_generated_tparams(value, label)
+    if getmetatable(value) == Vector
+        and is_finite_number(value[1])
+        and is_finite_number(value[2])
+        and is_finite_number(value[3])
+        and value[3] >= 1
+        and value[3] == math.floor(value[3])
+    then
+        return value[1], value[2], value[3]
+    end
 
-    local ok, value = pcall(body_expression, source, "partition by")
-    if not ok or type(value) ~= "table" then
+    Recovery.log_once(
+        "generated-intersection-tparams-invalid:" .. tostring(label),
+        "generated intersection geometry ignored",
+        "tparams must be Vector:new{start,stop,samples} with samples >= 1"
+    )
+    return nil
+end
+
+local function generated_style(value, kind, label)
+    if value == nil then return "" end
+
+    if type(value) == "function" then
+        local fn = wrap_user_function(value, label, "<function>")
+        return function(bindings)
+            local result = fn(bindings.simplex, bindings.t)
+            if type(result) ~= "string" then
+                error(label .. " callback must return a string", 0)
+            end
+            return result
+        end
+    end
+
+    if kind == "curve" then
+        return draw_options_expression(value, label)
+    end
+    return fill_options_expression(value, label)
+end
+
+local function generated_filter(value, label)
+    if value == nil then return "return true" end
+    if type(value) == "function" then
+        local fn = wrap_user_function(value, label, "<function>")
+        return function(bindings)
+            local result = fn(bindings.simplex, bindings.t)
+            if type(result) ~= "boolean" then
+                error(label .. " callback must return a boolean", 0)
+            end
+            return result
+        end
+    end
+    if is_nonempty_string(value) then return value end
+
+    Recovery.log_once(
+        "generated-intersection-filter-invalid:" .. tostring(label),
+        "generated intersection filter ignored",
+        "filter must be a Lua body or function"
+    )
+    return "return true"
+end
+
+local function normalize_partition_exclusions(value, label)
+    if value == nil then return nil end
+    if type(value) ~= "table" then
         Recovery.log_once(
-            "partition-spec-invalid",
+            "partition-exclusions-table-invalid:" .. tostring(label),
+            "partition exclusions ignored",
+            tostring(label) .. " must be a table of non-empty surface names"
+        )
+        return nil
+    end
+
+    local exclusions = {}
+    for _, name in ipairs(value) do
+        if is_nonempty_string(name) then
+            exclusions[name] = true
+        else
+            Recovery.log_once(
+                "partition-exclusion-name-invalid:" .. tostring(label),
+                "partition exclusion ignored",
+                tostring(label) .. " entries must be non-empty surface names"
+            )
+        end
+    end
+    return next(exclusions) and exclusions or nil
+end
+
+local function merge_partition_exclusions(a, b)
+    if a == nil then return b end
+    if b == nil then return a end
+    local merged = {}
+    for name in pairs(a) do merged[name] = true end
+    for name in pairs(b) do merged[name] = true end
+    return merged
+end
+
+local normalize_partition_specs
+
+local function resolve_generated_intersections(source, kind)
+    if not is_nonempty_string(source) then return {} end
+
+    local ok, items = pcall(body_expression, source, "intersection " .. kind .. "s")
+    if not ok or type(items) ~= "table" then
+        Recovery.log_once(
+            "generated-intersection-list-invalid:" .. kind,
+            "generated intersection geometry ignored",
+            ok and (kind .. " specification must return a table") or tostring(items)
+        )
+        return {}
+    end
+
+    local out = {}
+    for i, item in ipairs(items) do
+        if type(item) ~= "table" then
+            Recovery.log_once(
+                "generated-intersection-entry-invalid:" .. kind,
+                "generated intersection entry ignored",
+                "one or more entries were not keyed tables"
+            )
+            goto continue_generated_item
+        end
+
+        local surface_name = item.surface
+        local surface = is_nonempty_string(surface_name)
+            and lua_tikz3dtools.named_surfaces[surface_name]
+            or nil
+        if surface == nil then
+            Recovery.log_once(
+                "generated-intersection-surface-invalid:" .. kind .. ":" .. tostring(surface_name),
+                "generated intersection entry ignored",
+                "surface must name a previously defined surface"
+            )
+            goto continue_generated_item
+        end
+
+        local tstart, tstop, tsamples = resolve_generated_tparams(
+            item.tparams,
+            kind .. "[" .. tostring(i) .. "]"
+        )
+        if tstart == nil then goto continue_generated_item end
+
+        local matrix = item.matrix
+        if type(matrix) ~= "function" and getmetatable(matrix) ~= Matrix then
+            Recovery.log_once(
+                "generated-intersection-matrix-invalid:" .. kind .. ":" .. tostring(i),
+                "generated intersection entry ignored",
+                "matrix must be a Matrix or function(t) returning a Matrix"
+            )
+            goto continue_generated_item
+        end
+
+        local options
+        if kind == "curve" then
+            options = item.draw_options
+            if options == nil then options = item.drawoptions end
+        else
+            options = item.fill_options
+            if options == nil then options = item.filloptions end
+        end
+
+        out[#out + 1] = {
+            name = is_nonempty_string(item.name) and item.name or nil,
+            surface = surface,
+            surface_name = surface_name,
+            tstart = tstart,
+            tstop = tstop,
+            tsamples = tsamples,
+            matrix = matrix,
+            options = generated_style(
+                options,
+                kind,
+                "intersection " .. kind .. " options"
+            ),
+            filter = generated_filter(
+                item.filter,
+                "intersection " .. kind .. " filter"
+            ),
+            named_partitions = normalize_partition_specs(
+                item.partition_by or item.partitionby,
+                kind,
+                "intersection " .. kind .. " partition_by"
+            ),
+            partition_exclusions = normalize_partition_exclusions(
+                item.exclude_partition_by or item.excludepartitionby,
+                "intersection " .. kind .. " exclude_partition_by"
+            ),
+        }
+        ::continue_generated_item::
+    end
+    return out
+end
+
+normalize_partition_specs = function(value, owner_type, label)
+    if value == nil then return nil end
+    label = label or "partition by"
+    if type(value) ~= "table" then
+        Recovery.log_once(
+            "partition-spec-invalid:" .. tostring(label),
             "partition specification ignored",
-            ok and "partition_by did not return a table" or value
+            tostring(label) .. " must be a table"
         )
         return nil
     end
@@ -709,6 +900,45 @@ local function resolve_partition_specs(source, owner_type)
         ::continue_partition_item::
     end
     return (#specs > 0) and specs or nil
+end
+
+local function resolve_partition_specs(source, owner_type)
+    if not is_nonempty_string(source) then return nil end
+
+    local ok, value = pcall(body_expression, source, "partition by")
+    if not ok then
+        Recovery.log_once(
+            "partition-spec-eval-invalid",
+            "partition specification ignored",
+            value
+        )
+        return nil
+    end
+    return normalize_partition_specs(value, owner_type, "partition by")
+end
+
+local function merge_partition_specs(a, b)
+    if a == nil then return b end
+    if b == nil then return a end
+    local merged = {}
+    for _, spec in ipairs(a) do merged[#merged + 1] = spec end
+    for _, spec in ipairs(b) do merged[#merged + 1] = spec end
+    return merged
+end
+
+local function resolve_partition_exclusions(source)
+    if not is_nonempty_string(source) then return nil end
+
+    local ok, value = pcall(body_expression, source, "exclude partition by")
+    if not ok then
+        Recovery.log_once(
+            "partition-exclusions-invalid",
+            "partition exclusions ignored",
+            value
+        )
+        return nil
+    end
+    return normalize_partition_exclusions(value, "exclude partition by")
 end
 
 local function copy_record_with_simplex(source, simplex)
@@ -956,6 +1186,186 @@ local function deduplicate_highlights(highlights)
     return output
 end
 
+local function generated_parameter_value(start_value, stop_value, samples, index)
+    if samples == 1 then return start_value end
+    if index == 1 then return start_value end
+    if index == samples then return stop_value end
+    return start_value
+        + (stop_value - start_value) * ((index - 1) / (samples - 1))
+end
+
+local function generated_matrix_at(spec, t, label)
+    local matrix = spec.matrix
+    if type(matrix) == "function" then
+        local ok, value = pcall(matrix, t)
+        if not ok then
+            Recovery.log_once(
+                "generated-intersection-matrix-runtime:" .. label,
+                "generated intersection sample omitted",
+                tostring(value)
+            )
+            return nil
+        end
+        matrix = value
+    end
+
+    if getmetatable(matrix) ~= Matrix or not is_finite_numeric_matrix(matrix) then
+        Recovery.log_once(
+            "generated-intersection-matrix-result:" .. label,
+            "generated intersection sample omitted",
+            "matrix(t) did not return a finite Matrix"
+        )
+        return nil
+    end
+    return matrix
+end
+
+local function transformed_intersection_segment(segment, matrix, label)
+    return project_simplex(segment, matrix, label)
+end
+
+local function generated_bindings(surface_name, t)
+    return {surface = surface_name, t = t}
+end
+
+local function append_generated_curve(records, source_segment, spec)
+    for i = 1, spec.tsamples do
+        local t = generated_parameter_value(spec.tstart, spec.tstop, spec.tsamples, i)
+        local matrix = generated_matrix_at(spec, t, "curve:" .. spec.surface_name)
+        if matrix ~= nil then
+            local simplex = transformed_intersection_segment(
+                source_segment, matrix, "generated intersection curve")
+            if simplex ~= nil
+                and not simplex_matrix_is_degenerate(simplex, 2, 1e-10)
+            then
+                records[#records + 1] = {
+                    simplex = simplex,
+                    drawoptions = spec.options,
+                    type = "line segment",
+                    filter = spec.filter,
+                    bindings = generated_bindings(spec.surface_name, t),
+                    generated_intersection_curve = true,
+                    named_partitions = spec.named_partitions,
+                    partition_exclusions = spec.partition_exclusions,
+                    partition_object_name = spec.partition_object_name,
+                }
+            end
+        end
+    end
+end
+
+local function append_generated_surface_triangle(records, points, spec, t)
+    local simplex = Matrix:_new(points)
+    if simplex_matrix_is_degenerate(simplex, 3, 1e-10) then return end
+
+    records[#records + 1] = {
+        simplex = simplex,
+        filloptions = spec.options,
+        type = "triangle",
+        filter = spec.filter,
+        bindings = generated_bindings(spec.surface_name, t),
+        generated_intersection_surface = true,
+        named_partitions = spec.named_partitions,
+        partition_exclusions = spec.partition_exclusions,
+        partition_object_name = spec.partition_object_name,
+    }
+end
+
+local function append_generated_surface(records, source_segment, spec)
+    local original = source_segment
+    local previous = original
+
+    for i = 1, spec.tsamples do
+        local t = generated_parameter_value(spec.tstart, spec.tstop, spec.tsamples, i)
+        local matrix = generated_matrix_at(spec, t, "surface:" .. spec.surface_name)
+        if matrix ~= nil then
+            local current = transformed_intersection_segment(
+                original, matrix, "generated intersection surface")
+            if current ~= nil
+                and not simplex_matrix_is_degenerate(current, 2, 1e-10)
+            then
+                local A0 = Vector:_new(previous[1])
+                local B0 = Vector:_new(previous[2])
+                local A1 = Vector:_new(current[1])
+                local B1 = Vector:_new(current[2])
+                append_generated_surface_triangle(records, {A0, B0, A1}, spec, t)
+                append_generated_surface_triangle(records, {B0, B1, A1}, spec, t)
+                previous = current
+            end
+        end
+    end
+end
+
+local function append_independent_generated_intersections(records, output_records)
+    output_records = output_records or records
+    local segments_by_spec = {}
+    local ordered_specs = {}
+
+    local function bucket_for(spec, kind)
+        local bucket = segments_by_spec[spec]
+        if bucket == nil then
+            bucket = {spec = spec, kind = kind, segments = {}}
+            segments_by_spec[spec] = bucket
+            ordered_specs[#ordered_specs + 1] = bucket
+        end
+        return bucket
+    end
+
+    local base_count = #records
+    for ri = 1, base_count do
+        local record = records[ri]
+        if record.type == "triangle" then
+            local function collect(spec, kind)
+                local candidate_indices = {}
+                named_surface_tree(spec.surface):query(
+                    record.simplex:get_bbox3(),
+                    function(index) candidate_indices[#candidate_indices + 1] = index end
+                )
+                table.sort(candidate_indices)
+
+                local bucket = bucket_for(spec, kind)
+                for _, index in ipairs(candidate_indices) do
+                    local surface_record = spec.surface.triangles[index]
+                    if surface_record ~= record then
+                        local intersection = Geometry.htriangle_triangle_intersections(
+                            record.simplex, surface_record.simplex)
+                        if intersection ~= nil
+                            and getmetatable(intersection) == Matrix
+                            and #intersection == 2
+                            and not simplex_matrix_is_degenerate(intersection, 2, 1e-10)
+                        then
+                            bucket.segments[#bucket.segments + 1] = {
+                                simplex = intersection,
+                                drawoptions = "",
+                                type = "line segment",
+                                filter = "return true",
+                            }
+                        end
+                    end
+                end
+            end
+
+            for _, spec in ipairs(record.intersection_curves or {}) do
+                collect(spec, "curve")
+            end
+            for _, spec in ipairs(record.intersection_surfaces or {}) do
+                collect(spec, "surface")
+            end
+        end
+    end
+
+    for _, bucket in ipairs(ordered_specs) do
+        local segments = deduplicate_highlights(bucket.segments)
+        for _, segment in ipairs(segments) do
+            if bucket.kind == "curve" then
+                append_generated_curve(output_records, segment.simplex, bucket.spec)
+            else
+                append_generated_surface(output_records, segment.simplex, bucket.spec)
+            end
+        end
+    end
+end
+
 local function apply_named_surface_partitions(simplices)
     local result, highlights = {}, {}
 
@@ -1019,6 +1429,40 @@ local function apply_named_surface_partitions(simplices)
         for _, piece in ipairs(pieces) do
             piece.named_partitions = nil
             register_display_piece(piece)
+            result[#result + 1] = piece
+        end
+    end
+
+    highlights = deduplicate_highlights(highlights)
+
+    -- Generated intersection curves/surfaces are independent geometry and may
+    -- carry the same explicit partition controls as directly appended geometry.
+    -- Generate them only after named source surfaces have been rebuilt, then
+    -- apply their own partition_by specifications before the generic scene pass.
+    local generated = {}
+    append_independent_generated_intersections(result, generated)
+    for _, original in ipairs(generated) do
+        local specs = original.named_partitions
+        local pieces = {original}
+
+        if specs ~= nil then
+            for si, spec in ipairs(specs) do
+                local next_pieces = {}
+                for _, piece in ipairs(pieces) do
+                    local new_pieces, new_highlights = partition_record_once(piece, spec)
+                    for _, p in ipairs(new_pieces) do next_pieces[#next_pieces + 1] = p end
+                    for _, h in ipairs(new_highlights) do
+                        local clipped = apply_remaining_specs_to_highlight(h, specs, si + 1)
+                        for _, ch in ipairs(clipped) do highlights[#highlights + 1] = ch end
+                    end
+                end
+                pieces = next_pieces
+                if #pieces == 0 then break end
+            end
+        end
+
+        for _, piece in ipairs(pieces) do
+            piece.named_partitions = nil
             result[#result + 1] = piece
         end
     end
@@ -1104,7 +1548,10 @@ local function uv_curve_point_value(value)
     return nil
 end
 
-local function append_uv_curve_segment(uv_segments, start_point, stop_point, drawoptions, filter)
+local function append_uv_curve_segment(
+    uv_segments, start_point, stop_point, drawoptions, filter, name,
+    named_partitions, partition_exclusions
+)
     if start_point and stop_point
         and start_point:_hdistance(stop_point)
             > point_pair_epsilon(start_point, stop_point)
@@ -1113,11 +1560,17 @@ local function append_uv_curve_segment(uv_segments, start_point, stop_point, dra
             simplex = Matrix:_new{start_point, stop_point},
             drawoptions = drawoptions,
             filter = filter or "return true",
+            partition_object_name = name,
+            named_partitions = named_partitions,
+            partition_exclusions = partition_exclusions,
         })
     end
 end
 
-local function append_uv_arrow_segments(uv_segments, tip_point, tail_point, drawoptions, scale, filter)
+local function append_uv_arrow_segments(
+    uv_segments, tip_point, tail_point, drawoptions, scale, filter, name,
+    named_partitions, partition_exclusions
+)
     if not is_nonempty_string(drawoptions) then
         return
     end
@@ -1146,14 +1599,20 @@ local function append_uv_arrow_segments(uv_segments, tip_point, tail_point, draw
         base_point:_hadd(V:_hscale(tip_scale)),
         tip_point,
         drawoptions,
-        filter
+        filter,
+        name,
+        named_partitions,
+        partition_exclusions
     )
     append_uv_curve_segment(
         uv_segments,
         base_point:_hsub(V:_hscale(tip_scale)),
         tip_point,
         drawoptions,
-        filter
+        filter,
+        name,
+        named_partitions,
+        partition_exclusions
     )
 end
 
@@ -1183,15 +1642,35 @@ local function explicit_uv_curve_segments(str, label)
 
                 local filter = segment.filter
                 if not is_nonempty_string(filter) then filter = "return true" end
+                local name = is_nonempty_string(segment.name) and segment.name or nil
+                local drawoptions = segment.draw_options or segment.drawoptions
+                local named_partitions = normalize_partition_specs(
+                    segment.partition_by or segment.partitionby,
+                    "curve",
+                    label .. " partition_by"
+                )
+                local partition_exclusions = normalize_partition_exclusions(
+                    segment.exclude_partition_by or segment.excludepartitionby,
+                    label .. " exclude_partition_by"
+                )
 
-                append_uv_curve_segment(uv_segments, P, Q, segment.drawoptions, filter)
+                append_uv_curve_segment(
+                    uv_segments, P, Q, drawoptions, filter, name,
+                    named_partitions, partition_exclusions
+                )
 
                 if is_nonempty_string(segment.arrowtail) then
-                    append_uv_arrow_segments(uv_segments, P, Q, segment.arrowtail, arrowscale, filter)
+                    append_uv_arrow_segments(
+                        uv_segments, P, Q, segment.arrowtail, arrowscale, filter, name,
+                        named_partitions, partition_exclusions
+                    )
                 end
 
                 if is_nonempty_string(segment.arrowtip) then
-                    append_uv_arrow_segments(uv_segments, Q, P, segment.arrowtip, arrowscale, filter)
+                    append_uv_arrow_segments(
+                        uv_segments, Q, P, segment.arrowtip, arrowscale, filter, name,
+                        named_partitions, partition_exclusions
+                    )
                 end
             end
         end
@@ -1233,7 +1712,10 @@ end
 -- fragment therefore has a definitive set of supporting surface patches.
 -- Shared mesh edges naturally produce multiple support ids instead of duplicate
 -- curve geometry.
-local function append_supported_surface_segment(segment, surface_patches, patch_tree, named_partitions)
+local function append_supported_surface_segment(
+    segment, surface_patches, patch_tree, parent_name,
+    parent_named_partitions, parent_partition_exclusions
+)
     local uv_segment = segment.simplex
     local intervals = {}
     local boundaries = {}
@@ -1322,7 +1804,11 @@ local function append_supported_surface_segment(segment, surface_patches, patch_
                                 filter = segment.filter or "return true",
                                 support_patch_ids = support_patch_ids,
                                 surface_curve = true,
-                                named_partitions = named_partitions,
+                                partition_object_name = segment.partition_object_name or parent_name,
+                                named_partitions = merge_partition_specs(
+                                    parent_named_partitions, segment.named_partitions),
+                                partition_exclusions = merge_partition_exclusions(
+                                    parent_partition_exclusions, segment.partition_exclusions),
                             })
                         end
                     end
@@ -1332,7 +1818,9 @@ local function append_supported_surface_segment(segment, surface_patches, patch_
     end
 end
 
-local function append_supported_surface_curves(uv_segments, surface_patches, named_partitions)
+local function append_supported_surface_curves(
+    uv_segments, surface_patches, parent_name, named_partitions, partition_exclusions
+)
     if uv_segments == nil or #surface_patches == 0 then
         return
     end
@@ -1351,7 +1839,9 @@ local function append_supported_surface_curves(uv_segments, surface_patches, nam
             segment,
             surface_patches,
             patch_tree,
-            named_partitions
+            parent_name,
+            named_partitions,
+            partition_exclusions
         )
     end
 end
@@ -1466,6 +1956,23 @@ local function append_surface(hash)
     local filloptions    = fill_options_expression(hash.filloptions, "surface fill options")
     local filter         = hash.filter
     local named_partitions = resolve_partition_specs(hash.partitionby, "surface")
+    local partition_exclusions = resolve_partition_exclusions(hash.excludepartitionby)
+    local intersection_curves = resolve_generated_intersections(hash.intersectioncurves, "curve")
+    local intersection_surfaces = resolve_generated_intersections(hash.intersectionsurfaces, "surface")
+    for _, spec in ipairs(intersection_curves or {}) do
+        spec.named_partitions = merge_partition_specs(
+            named_partitions, spec.named_partitions)
+        spec.partition_exclusions = merge_partition_exclusions(
+            partition_exclusions, spec.partition_exclusions)
+        spec.partition_object_name = spec.name or hash.name
+    end
+    for _, spec in ipairs(intersection_surfaces or {}) do
+        spec.named_partitions = merge_partition_specs(
+            named_partitions, spec.named_partitions)
+        spec.partition_exclusions = merge_partition_exclusions(
+            partition_exclusions, spec.partition_exclusions)
+        spec.partition_object_name = spec.name or hash.name
+    end
     local named_surface = register_named_surface(hash.name)
     local adaptive = resolve_adaptive_spec(hash.adaptive, "surface adaptive")
     local uv_curve_segments
@@ -1506,8 +2013,12 @@ local function append_surface(hash)
             surface_partition_normal = uv_oriented_surface_normal(simplex, uv_points),
             surface_patch_id = patch_id,
             surface_name = hash.name,
+            partition_object_name = hash.name,
             named_surface_owner = named_surface,
             named_partitions = named_partitions,
+            partition_exclusions = partition_exclusions,
+            intersection_curves = intersection_curves,
+            intersection_surfaces = intersection_surfaces,
         }
         if push_simplex(record) then
             surface_patches[#surface_patches + 1] = {
@@ -1580,7 +2091,9 @@ local function append_surface(hash)
     -- Surface curves are independent line-segment simplices.  Their support
     -- metadata affects only the local support relationship in the occlusion
     -- graph; every other triangle remains a normal possible occluder.
-    append_supported_surface_curves(uv_curve_segments, surface_patches, named_partitions)
+    append_supported_surface_curves(
+        uv_curve_segments, surface_patches, hash.name, named_partitions, partition_exclusions
+    )
 end
 
 local function arrow_basis(tip_point, base_point)
@@ -1622,7 +2135,7 @@ local function fit_arrow_tip_to_segment(tip_point, neighbor_point, spec)
     }
 end
 
-local function append_projected_arrow_tip(tip_point, base_point, spec, filter, named_partitions)
+local function append_projected_arrow_tip(tip_point, base_point, spec, filter, name, named_partitions, partition_exclusions)
     if not (tip_point and base_point and spec) then
         return
     end
@@ -1649,7 +2162,9 @@ local function append_projected_arrow_tip(tip_point, base_point, spec, filter, n
             filloptions = spec.options,
             type = "triangle",
             filter = filter,
+            partition_object_name = name,
             named_partitions = named_partitions,
+            partition_exclusions = partition_exclusions,
             shading_normal = triangle_shading_normal(triangle),
         })
     end
@@ -1667,6 +2182,8 @@ local function append_triangle(hash)
     local transformation = resolve_transformation(hash.transformation)
     local filter         = hash.filter
     local filloptions    = fill_options_expression(hash.filloptions, "triangle fill options")
+    local named_partitions = resolve_partition_specs(hash.partitionby, "surface")
+    local partition_exclusions = resolve_partition_exclusions(hash.excludepartitionby)
     assert(hash.m and hash.m ~= "", "appendtriangle.m must return a 3-row Matrix")
 
     local the_simplex = object_expression(hash.m)
@@ -1689,6 +2206,9 @@ local function append_triangle(hash)
                 filloptions = filloptions,
                 type        = "triangle",
                 filter      = filter,
+                partition_object_name = hash.name,
+                named_partitions = named_partitions,
+                partition_exclusions = partition_exclusions,
                 shading_normal = triangle_shading_normal(projected)
             })
         end
@@ -1736,6 +2256,7 @@ local function append_curve(hash)
     local arrowtip       = resolve_arrow_tip_spec(hash.arrowtip, "curve arrow tip")
     local arrowtail      = resolve_arrow_tip_spec(hash.arrowtail, "curve arrow tail")
     local named_partitions = resolve_partition_specs(hash.partitionby, "curve")
+    local partition_exclusions = resolve_partition_exclusions(hash.excludepartitionby)
     local adaptive       = resolve_adaptive_spec(hash.adaptive, "curve adaptive")
 
     assert(usamples and usamples >= 2, "usamples must be >= 2, got: " .. tostring(usamples))
@@ -1807,20 +2328,22 @@ local function append_curve(hash)
                         drawoptions  = drawoptions,
                         type         = "line segment",
                         filter       = filter,
-                        named_partitions = named_partitions
+                        partition_object_name = hash.name,
+                        named_partitions = named_partitions,
+                        partition_exclusions = partition_exclusions
                     })
                 end
 
                 if effective_tail then
                     append_projected_arrow_tip(
                         original_start, tail_base, effective_tail,
-                        filter, named_partitions)
+                        filter, hash.name, named_partitions, partition_exclusions)
                 end
 
                 if effective_tip then
                     append_projected_arrow_tip(
                         original_stop, tip_base, effective_tip,
-                        filter, named_partitions)
+                        filter, hash.name, named_partitions, partition_exclusions)
                 end
             end
         end
@@ -1847,6 +2370,7 @@ append_solid = function(hash)
     local filloptions    = fill_options_expression(hash.filloptions, "solid fill options")
     local filter = hash.filter
     local named_partitions = resolve_partition_specs(hash.partitionby, "solid")
+    local partition_exclusions = resolve_partition_exclusions(hash.excludepartitionby)
     local transformation = resolve_transformation(hash.transformation)
     local f = triple_string_function(hash.v)
 
@@ -1897,8 +2421,10 @@ append_solid = function(hash)
                             filloptions = filloptions,
                             type        = "triangle",
                             filter      = filter,
+                            partition_object_name = hash.name,
                             shading_normal = triangle_shading_normal(simplex),
-                            named_partitions = named_partitions
+                            named_partitions = named_partitions,
+                            partition_exclusions = partition_exclusions
                         })
                     end
                 end
@@ -1913,8 +2439,10 @@ append_solid = function(hash)
                             filloptions = filloptions,
                             type        = "triangle",
                             filter      = filter,
+                            partition_object_name = hash.name,
                             shading_normal = triangle_shading_normal(simplex),
-                            named_partitions = named_partitions
+                            named_partitions = named_partitions,
+                            partition_exclusions = partition_exclusions
                         })
                     end
                 end
@@ -1957,39 +2485,53 @@ local function compile_filter(filter_body)
     end
 end
 
+local function simplex_runtime_bindings(simplex)
+    local bindings = {simplex = simplex.simplex}
+
+    if simplex.type == "line segment" then
+        bindings.A = Vector:_new(simplex.simplex[1])
+        bindings.B = Vector:_new(simplex.simplex[2])
+    elseif simplex.type == "triangle" then
+        bindings.A = Vector:_new(simplex.simplex[1])
+        bindings.B = Vector:_new(simplex.simplex[2])
+        bindings.C = Vector:_new(simplex.simplex[3])
+    elseif simplex.type == "label" then
+        bindings.A = Vector:_new(simplex.simplex)
+    end
+
+    for key, value in pairs(simplex.bindings or {}) do
+        bindings[key] = value
+    end
+    return bindings
+end
+
 local function apply_filters(simplices)
     local new_simplices = {}
     local compiled_filters = {}
     local broken_filters = {}
 
     for _, simplex in ipairs(simplices) do
-        local bindings = {}
-
-        if simplex.type == "line segment" then
-            bindings.A = Vector:_new(simplex.simplex[1])
-            bindings.B = Vector:_new(simplex.simplex[2])
-        elseif simplex.type == "triangle" then
-            bindings.A = Vector:_new(simplex.simplex[1])
-            bindings.B = Vector:_new(simplex.simplex[2])
-            bindings.C = Vector:_new(simplex.simplex[3])
-        elseif simplex.type == "label" then
-            bindings.A = Vector:_new(simplex.simplex)
-        end
-
+        local bindings = simplex_runtime_bindings(simplex)
         local filter_body = simplex.filter or "return true"
-        local filter_fn = compiled_filters[filter_body]
-        if filter_fn == nil and not broken_filters[filter_body] then
-            local ok, compiled = pcall(compile_filter, filter_body)
-            if ok then
-                filter_fn = compiled
-                compiled_filters[filter_body] = compiled
-            else
-                broken_filters[filter_body] = true
-                Recovery.log_once(
-                    "filter-compile:" .. tostring(filter_body),
-                    "filter dropped geometry",
-                    "filter could not be compiled"
-                )
+        local filter_fn
+
+        if type(filter_body) == "function" then
+            filter_fn = filter_body
+        else
+            filter_fn = compiled_filters[filter_body]
+            if filter_fn == nil and not broken_filters[filter_body] then
+                local ok, compiled = pcall(compile_filter, filter_body)
+                if ok then
+                    filter_fn = compiled
+                    compiled_filters[filter_body] = compiled
+                else
+                    broken_filters[filter_body] = true
+                    Recovery.log_once(
+                        "filter-compile:" .. tostring(filter_body),
+                        "filter dropped geometry",
+                        "filter could not be compiled"
+                    )
+                end
             end
         end
 
@@ -2094,9 +2636,7 @@ local function display_simplices()
             if simplex.type == "line segment" then
                 local drawoptions = simplex.drawoptions or ""
                 if type(drawoptions) == "function" then
-                    local A = Vector:_new(simplex.simplex[1])
-                    local B = Vector:_new(simplex.simplex[2])
-                    drawoptions = drawoptions({A = A, B = B})
+                    drawoptions = drawoptions(simplex_runtime_bindings(simplex))
                 end
                 if type(drawoptions) ~= "string" then
                     error("draw options did not resolve to a string", 0)
@@ -2146,11 +2686,11 @@ local function display_simplices()
 
                 local filloptions = simplex.filloptions or ""
                 if type(filloptions) == "function" then
-                    local A = Vector:_new(simplex.simplex[1])
-                    local B = Vector:_new(simplex.simplex[2])
-                    local C = Vector:_new(simplex.simplex[3])
+                    local bindings = simplex_runtime_bindings(simplex)
+                    bindings.lighting = intensity
+                    bindings.normal = normal
                     filloptions = filloptions(
-                        {A = A, B = B, C = C, lighting = intensity, normal = normal},
+                        bindings,
                         intensity, simplex.simplex, normal
                     )
                 end
@@ -2205,7 +2745,16 @@ local function display_simplices()
             function()
                 return Geometry.partition_simplices_by_parents(
                     lua_tikz3dtools.simplices,
-                    lua_tikz3dtools.simplices
+                    lua_tikz3dtools.simplices,
+                    function(piece, parent)
+                        local exclusions = piece.partition_exclusions
+                        local parent_name = parent.partition_object_name or parent.surface_name
+                        return not (
+                            exclusions ~= nil
+                            and is_nonempty_string(parent_name)
+                            and exclusions[parent_name]
+                        )
+                    end
                 )
             end
         )
@@ -2307,6 +2856,9 @@ function Scene.register_commands()
             curve          = token.get_macro("luatikztdtools@p@s@curve"),
             name           = token.get_macro("luatikztdtools@p@s@name"),
             partitionby    = token.get_macro("luatikztdtools@p@s@partitionby"),
+            excludepartitionby = token.get_macro("luatikztdtools@p@s@excludepartitionby"),
+            intersectioncurves = token.get_macro("luatikztdtools@p@s@intersectioncurves"),
+            intersectionsurfaces = token.get_macro("luatikztdtools@p@s@intersectionsurfaces"),
             adaptive       = token.get_macro("luatikztdtools@p@s@adaptive"),
             transformation = get_macro_or("luatikztdtools@p@s@transformation", "return Matrix.identity()"),
             filloptions    = get_macro_or("luatikztdtools@p@s@filloptions", "return \"\""),
@@ -2316,10 +2868,13 @@ function Scene.register_commands()
 
     register_tex_cmd("appendtriangle", function()
         append_triangle{
+            name           = token.get_macro("luatikztdtools@p@t@name"),
             m              = token.get_macro("luatikztdtools@p@t@m"),
             transformation = get_macro_or("luatikztdtools@p@t@transformation", "return Matrix.identity()"),
             filloptions    = get_macro_or("luatikztdtools@p@t@filloptions", "return \"\""),
             filter         = get_macro_or("luatikztdtools@p@t@filter", "return true"),
+            partitionby    = token.get_macro("luatikztdtools@p@t@partitionby"),
+            excludepartitionby = token.get_macro("luatikztdtools@p@t@excludepartitionby"),
         }
     end, { })
 
@@ -2340,6 +2895,7 @@ function Scene.register_commands()
 
     register_tex_cmd("appendcurve", function()
         append_curve{
+            name           = token.get_macro("luatikztdtools@p@c@name"),
             uparams        = get_macro_or("luatikztdtools@p@c@uparams", "return Vector:new{0,1,10}"),
             v              = token.get_macro("luatikztdtools@p@c@v"),
             transformation = get_macro_or("luatikztdtools@p@c@transformation", "return Matrix.identity()"),
@@ -2348,12 +2904,14 @@ function Scene.register_commands()
             arrowtail      = token.get_macro("luatikztdtools@p@c@arrowtail"),
             filter         = get_macro_or("luatikztdtools@p@c@filter", "return true"),
             partitionby    = token.get_macro("luatikztdtools@p@c@partitionby"),
+            excludepartitionby = token.get_macro("luatikztdtools@p@c@excludepartitionby"),
             adaptive       = token.get_macro("luatikztdtools@p@c@adaptive")
         }
     end, { })
 
     register_tex_cmd("appendsolid", function()
         append_solid{
+            name           = token.get_macro("luatikztdtools@p@solid@name"),
             uparams        = get_macro_or("luatikztdtools@p@solid@uparams", "return Vector:new{0,1,10}"),
             vparams        = get_macro_or("luatikztdtools@p@solid@vparams", "return Vector:new{0,1,10}"),
             wparams        = get_macro_or("luatikztdtools@p@solid@wparams", "return Vector:new{0,1,10}"),
@@ -2361,7 +2919,8 @@ function Scene.register_commands()
             transformation = get_macro_or("luatikztdtools@p@solid@transformation", "return Matrix.identity()"),
             filloptions    = get_macro_or("luatikztdtools@p@solid@filloptions", "return \"\""),
             filter         = get_macro_or("luatikztdtools@p@solid@filter", "return true"),
-            partitionby    = token.get_macro("luatikztdtools@p@solid@partitionby")
+            partitionby    = token.get_macro("luatikztdtools@p@solid@partitionby"),
+            excludepartitionby = token.get_macro("luatikztdtools@p@solid@excludepartitionby")
         }
     end, { })
 

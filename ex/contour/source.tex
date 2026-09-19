@@ -1,0 +1,166 @@
+\documentclass[tikz,border=8mm]{standalone}
+\usepackage{lua-tikz3dtools}
+
+\begin{document}
+\begin{tikzpicture}
+    \useasboundingbox (-5.2,-4.2) rectangle (5.2,4.2);
+
+    \ltdtsetobject[
+        name={return "objs"},
+        object={
+            local function f(x,y)
+                return exp(-((x-2)^2+y^2))
+                    +2*exp(-((x+1)^2+(y-sqrt(3))^2))
+                    +3*exp(-((x+1)^2+(y+sqrt(3))^2))
+            end
+            local function level(i)
+                return 0.1+(i-1)*2.8/11
+            end
+            local levels={}
+            local curtains={}
+            for i=1,12 do
+                levels[i]="level"..i
+                curtains[i]="curtain"..i
+            end
+            local graph_excludes={}
+            for _,name in ipairs(levels) do
+                table.insert(graph_excludes,name)
+            end
+            for _,name in ipairs(curtains) do
+                table.insert(graph_excludes,name)
+            end
+            local curtain_excludes={"graph"}
+            for _,name in ipairs(levels) do
+                table.insert(curtain_excludes,name)
+            end
+            for _,name in ipairs(curtains) do
+                table.insert(curtain_excludes,name)
+            end
+            local colors={
+                "red",
+                "red!60!orange",
+                "orange",
+                "orange!50!yellow",
+                "yellow!80!green",
+                "green",
+                "green!50!cyan",
+                "cyan",
+                "cyan!50!blue",
+                "blue",
+                "blue!50!violet",
+                "violet!60!magenta"
+            }
+            local view=Matrix.zyzrotation(
+                Vector:new{130*pi/180,60*pi/180,pi/2}
+            )
+            local invview=view:inverse()
+            local function down(t)
+                return invview
+                    :multiply(
+                        Matrix.translate(
+                            Vector:new{0,0,-t,1}
+                        )
+                    )
+                    :multiply(view)
+            end
+            return {
+                f=f,
+                level=level,
+                levels=levels,
+                curtains=curtains,
+                graph_excludes=graph_excludes,
+                curtain_excludes=curtain_excludes,
+                colors=colors,
+                view=view,
+                down=down
+            }
+        }
+    ]
+
+    \foreach \i in {1,...,12}{
+        \ltdtappendsurface[
+            name=level\i,
+            uparams={return Vector:new{-5,5,2}},
+            vparams={return Vector:new{-5,5,2}},
+            v={
+                return Vector:new{
+                    u,
+                    v,
+                    objs.level(\i),
+                    1
+                }
+            },
+            transformation={return objs.view},
+            filter={return false}
+        ]
+    }
+
+    \ltdtappendsurface[
+        name=graph,
+        uparams={return Vector:new{-5,5,21}},
+        vparams={return Vector:new{-5,5,21}},
+        adaptive={
+            return {
+                tolerance=.001,
+                feature_tolerance=.001,
+                max_depth=3,
+                max_triangles=2000
+            }
+        },
+        v={
+            return Vector:new{
+                u,
+                v,
+                objs.f(u,v),
+                1
+            }
+        },
+        transformation={return objs.view},
+        filter={return true},
+        exclude partition by={return objs.graph_excludes},
+        fill options={
+            return "fill=black,fill opacity=.05,draw=black!30,line width=.10pt,line join=round"
+        },
+        intersection curves={
+            local curves={}
+            for i=1,12 do
+                local level=objs.level(i)
+                table.insert(curves,{
+                    name="contour"..i,
+                    surface="level"..i,
+                    tparams=Vector:new{level,level,1},
+                    matrix=objs.down,
+                    filter=function(simplex,t)
+                        return true
+                    end,
+                    exclude_partition_by=objs.levels,
+                    draw_options="draw=blue!65!black,line width=.48pt"
+                })
+            end
+            return curves
+        },
+        intersection surfaces={
+            local surfaces={}
+            for i=1,12 do
+                local level=objs.level(i)
+                table.insert(surfaces,{
+                    name="curtain"..i,
+                    surface="level"..i,
+                    tparams=Vector:new{level,level,1},
+                    matrix=objs.down,
+                    filter=function(simplex,t)
+                        return true
+                    end,
+                    exclude_partition_by=objs.curtain_excludes,
+                    fill_options=
+                        "fill="..objs.colors[i]
+                        ..",fill opacity=.5,draw=none"
+                })
+            end
+            return surfaces
+        }
+    ]
+
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\end{document}

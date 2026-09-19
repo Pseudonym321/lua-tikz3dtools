@@ -1393,9 +1393,10 @@ end
 --- Skips self-partitioning.
 --- @param simplices table
 --- @param parents table
+--- @param should_partition function|nil optional predicate(piece, parent)
 --- @return table terminal pieces
 --- @return table diagnostics
-function Geometry.partition_simplices_by_parents(simplices, parents)
+function Geometry.partition_simplices_by_parents(simplices, parents, should_partition)
     local result = {}
     local stats = {
         input_simplices = #simplices,
@@ -1407,6 +1408,7 @@ function Geometry.partition_simplices_by_parents(simplices, parents)
         pieces_created = 0,
         max_depth = 0,
         depth_limit_hits = 0,
+        excluded_parents = 0,
         output_pieces = 0,
     }
 
@@ -1469,7 +1471,12 @@ function Geometry.partition_simplices_by_parents(simplices, parents)
 
         for _, pi in ipairs(candidate_indices) do
             local parent = parents[pi]
-            if pi ~= skip_parent
+            local allowed = should_partition == nil or should_partition(piece, parent)
+            if not allowed then
+                stats.excluded_parents = stats.excluded_parents + 1
+            end
+            if allowed
+                and pi ~= skip_parent
                 and piece ~= parent
                 and Geometry.support_order(piece, parent) == nil
             then
@@ -1625,6 +1632,206 @@ function Geometry.frenet(curve, parameter, step)
     T[4], N[4], B[4], P[4] = 0, 0, 0, 1
     return Matrix:new{T, N, B, P}
 end
+
+
+--- Compute an affine rotation-minimizing frame for a regular 3D parametric curve.
+--- The transverse axes are parallel-transported from a reference parameter by
+--- the minimal rotation taking each sampled unit tangent to the next.  This is
+--- a discrete Bishop/rotation-minimizing frame, so it avoids the torsional spin
+--- of the Frenet frame and remains usable through zero-curvature portions.
+---
+--- The returned Matrix has rows T, N, B, P, exactly like Geometry.frenet.
+--- reference_parameter defaults to 0.  initial_normal may be omitted; in that
+--- case a deterministic normal orthogonal to the reference tangent is chosen.
+--- transport_step controls the maximum parameter spacing used for transport.
+--- If omitted, at most about 64 transport steps are used over the interval.
+--- @param curve function number -> Vector homogeneous 3D parametric map
+--- @param parameter number parameter value at which to evaluate the frame
+--- @param step number positive finite-difference step for tangent estimation
+--- @param reference_parameter number|nil parameter at which transport begins
+--- @param initial_normal Vector|nil preferred normal at the reference parameter
+--- @param transport_step number|nil positive maximum parameter transport step
+--- @return Matrix affine rotation-minimizing frame with rows T, N, B, P
+function Geometry.rmf(curve, parameter, step, reference_parameter, initial_normal, transport_step)
+    local function finite_number(value)
+        return type(value) == "number"
+            and value == value
+            and value ~= math.huge
+            and value ~= -math.huge
+    end
+
+    local function valid_point(point)
+        if getmetatable(point) ~= Vector or #point ~= 4 then return false end
+        for i = 1, 4 do
+            if not finite_number(point[i]) then return false end
+        end
+        return true
+    end
+
+    local function valid_direction(direction)
+        if getmetatable(direction) ~= Vector or (#direction ~= 3 and #direction ~= 4) then
+            return false
+        end
+        for i = 1, 3 do
+            if not finite_number(direction[i]) then return false end
+        end
+        local n2 = direction[1]^2 + direction[2]^2 + direction[3]^2
+        return finite_number(n2) and n2 > 0
+    end
+
+    local function fallback_frame(point, reason)
+        Recovery.log_once("rmf:" .. tostring(reason), "Rotation-minimizing frame recovered", reason)
+        if type(curve) == "function" then
+            return Geometry.frenet(curve, parameter, step)
+        end
+        local P = valid_point(point) and point:copy() or Vector:new{0, 0, 0, 1}
+        P[4] = 1
+        return Matrix:new{
+            Vector:new{1, 0, 0, 0},
+            Vector:new{0, 1, 0, 0},
+            Vector:new{0, 0, 1, 0},
+            P,
+        }
+    end
+
+    if type(curve) ~= "function" then
+        return fallback_frame(nil, "curve was not callable; using a canonical frame")
+    end
+    if not finite_number(parameter) then parameter = 0 end
+    if not (finite_number(step) and step > 0) then step = 1e-5 end
+    if not finite_number(reference_parameter) then reference_parameter = 0 end
+
+    local function point_at(t)
+        local ok, p = pcall(curve, t)
+        if ok and valid_point(p) then return p end
+        return nil, ok and "curve returned an invalid point" or p
+    end
+
+    local function tangent_at(t)
+        local pm, errm = point_at(t - step)
+        if not pm then return nil, errm end
+        local pp, errp = point_at(t + step)
+        if not pp then return nil, errp end
+        local tangent = pp:_hsub(pm)
+        local norm = tangent:hnorm()
+        if not (finite_number(norm) and norm > 0) then
+            return nil, "curve tangent vanished or became non-finite"
+        end
+        tangent = tangent:hnormalize()
+        tangent[4] = 0
+        return tangent
+    end
+
+    local function orthogonalize(normal, tangent)
+        local dot = normal[1] * tangent[1] + normal[2] * tangent[2] + normal[3] * tangent[3]
+        local n = Vector:new{
+            normal[1] - dot * tangent[1],
+            normal[2] - dot * tangent[2],
+            normal[3] - dot * tangent[3],
+            0,
+        }
+        local norm = n:hnorm()
+        if not (finite_number(norm) and norm > GEOMETRY_REL_EPS) then return nil end
+        n = n:hnormalize()
+        n[4] = 0
+        return n
+    end
+
+    local function minimal_rotate(vector, from_tangent, to_tangent)
+        local ax, ay, az = from_tangent[1], from_tangent[2], from_tangent[3]
+        local bx, by, bz = to_tangent[1], to_tangent[2], to_tangent[3]
+        local vx, vy, vz = vector[1], vector[2], vector[3]
+        local cx = ay * bz - az * by
+        local cy = az * bx - ax * bz
+        local cz = ax * by - ay * bx
+        local c = ax * bx + ay * by + az * bz
+        local s2 = cx * cx + cy * cy + cz * cz
+
+        if s2 <= GEOMETRY_REL_EPS * GEOMETRY_REL_EPS then
+            if c >= 0 then
+                return Vector:new{vx, vy, vz, 0}
+            end
+            -- Adjacent tangents should not normally be antiparallel.  If they
+            -- are, keeping the old normal gives a deterministic half-turn
+            -- about that normal after the final orthogonalization below.
+            return Vector:new{vx, vy, vz, 0}
+        end
+
+        local kxv_x = cy * vz - cz * vy
+        local kxv_y = cz * vx - cx * vz
+        local kxv_z = cx * vy - cy * vx
+        local kxkxv_x = cy * kxv_z - cz * kxv_y
+        local kxkxv_y = cz * kxv_x - cx * kxv_z
+        local kxkxv_z = cx * kxv_y - cy * kxv_x
+        local factor = (1 - c) / s2
+        return Vector:new{
+            vx + kxv_x + factor * kxkxv_x,
+            vy + kxv_y + factor * kxkxv_y,
+            vz + kxv_z + factor * kxkxv_z,
+            0,
+        }
+    end
+
+    local p0, err0 = point_at(reference_parameter)
+    if not p0 then return fallback_frame(nil, err0) end
+    local T, terr = tangent_at(reference_parameter)
+    if not T then return fallback_frame(p0, terr) end
+
+    local N
+    if valid_direction(initial_normal) then
+        N = orthogonalize(initial_normal, T)
+    end
+    if not N then
+        N = T:horthogonal_vector():hnormalize()
+        N[4] = 0
+    end
+    local B = T:_hcross(N):hnormalize()
+    B[4] = 0
+    N = B:_hcross(T):hnormalize()
+    N[4] = 0
+
+    local delta = parameter - reference_parameter
+    if delta ~= 0 then
+        if not (finite_number(transport_step) and transport_step > 0) then
+            transport_step = math.max(16 * step, math.abs(delta) / 64)
+        end
+        local count = math.max(1, math.ceil(math.abs(delta) / transport_step))
+        if count > 16384 then
+            Recovery.log_once(
+                "rmf:transport-step-cap",
+                "Rotation-minimizing frame recovered",
+                "transport sampling capped at 16384 steps"
+            )
+            count = 16384
+        end
+        local dt = delta / count
+        for i = 1, count do
+            local next_t = reference_parameter + i * dt
+            local next_T, next_err = tangent_at(next_t)
+            if not next_T then return fallback_frame(p0, next_err) end
+            N = minimal_rotate(N, T, next_T)
+            N = orthogonalize(N, next_T)
+            if not N then
+                N = next_T:horthogonal_vector():hnormalize()
+                N[4] = 0
+            end
+            B = next_T:_hcross(N):hnormalize()
+            B[4] = 0
+            N = B:_hcross(next_T):hnormalize()
+            N[4] = 0
+            T = next_T
+        end
+    end
+
+    local P, perr = point_at(parameter)
+    if not P then return fallback_frame(p0, perr) end
+    P = P:copy()
+    T[4], N[4], B[4], P[4] = 0, 0, 0, 1
+    return Matrix:new{T, N, B, P}
+end
+
+--- Long-form alias for Geometry.rmf.
+Geometry.rotation_minimizing_frame = Geometry.rmf
 
 
 return Geometry
