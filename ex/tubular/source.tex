@@ -1,0 +1,140 @@
+\documentclass[tikz,border=1cm]{standalone}
+\usepackage{lua-tikz3dtools} % https://github.com/Pseudonym321/lua-tikz3dtools
+
+\begin{document}
+\begin{tikzpicture}
+    \useasboundingbox (-4,-4) rectangle (4,4);
+
+    \ltdtsetobject[
+        name={return "objs"},
+        object={
+            local function a(t)
+                local p=Vector.sphere(Vector:new{t,pi/2,2})
+                return Vector:new{p[1],p[2],.55*t,1}
+            end
+            local initial=Geometry.frenet(a,0,1e-4)[2]
+            local view=Matrix.zyzrotation(
+                Vector:new{7*pi/6,pi/3,pi/2}
+            ):multiply(
+                Matrix.perspective(
+                    Vector:new{0,0,-1/24}
+                )
+            )
+            return {
+                a=a,
+                initial=initial,
+                view=view
+            }
+        }
+    ]
+
+    \ltdtappendlight[
+        v={return Vector:new{-3,-2,5,1}}
+    ]
+
+    \ltdtappendsurface[
+        name=tube,
+        uparams={return Vector:new{0,tau,48}},
+        vparams={return Vector:new{-pi/2,pi,18}},
+        v={
+            local s=Vector.sphere(Vector:new{v,pi/2,.5})
+            local frame=Geometry.rmf(
+                objs.a,
+                u,
+                1e-4,
+                0,
+                objs.initial,
+                .04
+            )
+            return Vector:new{
+                0,
+                s[1],
+                s[2],
+                1
+            }:multiply(frame)
+        },
+        transformation={return objs.view},
+        fill options={
+            local shade=floor(30+65*lighting)
+            return "fill=cyan!"..shade.."!blue,draw=black!12,line width=.035pt,line join=round"
+        }
+    ]
+
+    \ltdtappendcurve[
+        name=centerline,
+        uparams={return Vector:new{0,tau,120}},
+        v={return objs.a(u)},
+        transformation={return objs.view},
+        draw options={
+            return "draw=black,line width=.65pt,line cap=round"
+        }
+    ]
+
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\begin{tikzpicture}
+    \useasboundingbox (-4,-4) rectangle (4,4);
+
+    \ltdtsetobject[
+        name={return "objs"},
+        object={
+            local function a(t)
+                local p=Vector.sphere(Vector:new{t,pi/2,2})
+                return Vector:new{p[1],p[2],.55*t,1}
+            end
+            local view=Matrix.zyzrotation(
+                Vector:new{7*pi/6,pi/3,pi/2}
+            ):multiply(
+                Matrix.perspective(
+                    Vector:new{0,0,-1/24}
+                )
+            )
+            return {
+                a=a,
+                view=view
+            }
+        }
+    ]
+
+    \ltdtappendlight[
+        v={return Vector:new{-3,-2,5,1}}
+    ]
+
+    \ltdtappendsurface[
+        name=tube,
+        uparams={return Vector:new{0,tau,48}},
+        vparams={return Vector:new{-pi,pi/2,18}},
+        v={
+            local s=Vector.sphere(Vector:new{v,pi/2,.5})
+            local frame=Geometry.frenet(
+                objs.a,
+                u,
+                1e-4
+            )
+            return Vector:new{
+                0,
+                s[1],
+                s[2],
+                1
+            }:multiply(frame)
+        },
+        transformation={return objs.view},
+        fill options={
+            local shade=floor(30+65*lighting)
+            return "fill=purple!"..shade.."!pink,draw=black!12,line width=.035pt,line join=round"
+        }
+    ]
+
+    \ltdtappendcurve[
+        name=centerline,
+        uparams={return Vector:new{0,tau,120}},
+        v={return objs.a(u)},
+        transformation={return objs.view},
+        draw options={
+            return "draw=black,line width=.65pt,line cap=round"
+        }
+    ]
+
+    \ltdtdisplaysimplices
+\end{tikzpicture}
+\end{document}

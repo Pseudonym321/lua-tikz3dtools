@@ -23,17 +23,13 @@
                 curtains[i]="curtain"..i
             end
             local graph_excludes={}
+            local curtain_excludes={}
             for _,name in ipairs(levels) do
                 table.insert(graph_excludes,name)
-            end
-            for _,name in ipairs(curtains) do
-                table.insert(graph_excludes,name)
-            end
-            local curtain_excludes={"graph"}
-            for _,name in ipairs(levels) do
                 table.insert(curtain_excludes,name)
             end
             for _,name in ipairs(curtains) do
+                table.insert(graph_excludes,name)
                 table.insert(curtain_excludes,name)
             end
             local colors={
@@ -119,7 +115,7 @@
         filter={return true},
         exclude partition by={return objs.graph_excludes},
         fill options={
-            return "fill=black,fill opacity=.05,draw=black!30,line width=.10pt,line join=round"
+            return "fill=black,fill opacity=0,draw=black,line width=.10pt,line join=round"
         },
         intersection curves={
             local curves={}
@@ -154,7 +150,7 @@
                     exclude_partition_by=objs.curtain_excludes,
                     fill_options=
                         "fill="..objs.colors[i]
-                        ..",fill opacity=.5,draw=none"
+                        ..",fill opacity=1,draw=none"
                 })
             end
             return surfaces
